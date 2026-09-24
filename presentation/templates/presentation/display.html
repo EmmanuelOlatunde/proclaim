@@ -1,0 +1,24 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Display — {{ room_code }}</title>
+<link rel="stylesheet" href="{% static 'presentation/css/display.css' %}">
+</head>
+<body>
+<div id="display">
+  <div class="d-stage" id="stage">
+    <div class="d-content" id="content">
+      <div class="d-placeholder">Awaiting presentation…</div>
+    </div>
+  </div>
+</div>
+<script>
+window.ROOM_CODE = "{{ room_code }}";
+window.HOST = "{{ host }}";
+</script>
+<script src="{% static 'presentation/js/display.js' %}"></script>
+</body>
+</html>

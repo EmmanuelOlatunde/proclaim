@@ -1,0 +1,73 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>ChurchCast Control — {{ room_code }}</title>
+<link rel="stylesheet" href="{% static 'presentation/css/app.css' %}">
+</head>
+<body>
+<div class="cc-ctrl" id="app">
+
+  <!-- Top bar -->
+  <div class="cc-top">
+    <span class="cc-top__room">{{ room_code }}</span>
+    <span class="cc-top__status">
+      <span class="cc-top__dot" id="statusDot"></span>
+      <span id="statusText">Connecting…</span>
+    </span>
+    <span class="cc-top__title" id="liveTitle">—</span>
+  </div>
+
+  <!-- Preview -->
+  <div class="cc-preview">
+    <div class="cc-preview__canvas" id="previewCanvas">
+      <div class="cc-preview__label" id="previewLabel">No content</div>
+      <div class="cc-preview__ref" id="previewRef"></div>
+      <div class="cc-preview__text" id="previewText"></div>
+      <img class="cc-preview__img" id="previewImg" style="display:none">
+      <div class="cc-preview__countdown-label" id="countdownLabel" style="display:none"></div>
+      <div class="cc-preview__countdown" id="countdownDisplay" style="display:none">0:00</div>
+    </div>
+    <div class="cc-preview__meta">
+      <span class="cc-preview__slide-num" id="slideNum">0 / 0</span>
+      <span class="cc-preview__section-label" id="sectionLabel"></span>
+    </div>
+  </div>
+
+  <!-- Nav controls -->
+  <div class="cc-nav">
+    <button class="cc-nav__prev" id="prevBtn">◀ Prev</button>
+    <button class="cc-nav__blank" id="blankBtn">BLANK</button>
+    <button class="cc-nav__next" id="nextBtn">Next ▶</button>
+  </div>
+
+  <!-- Slide strip -->
+  <div class="cc-slides" id="slideStrip"></div>
+
+  <!-- Tabs -->
+  <div class="cc-tabs" id="tabs">
+    <button class="cc-tab active" data-tab="queue">Queue</button>
+    <button class="cc-tab" data-tab="library">Library</button>
+    <button class="cc-tab" data-tab="songs">Songs</button>
+    <button class="cc-tab" data-tab="scripture">Scripture</button>
+    <button class="cc-tab" data-tab="images">Images</button>
+    <button class="cc-tab" data-tab="announcements">Announcements</button>
+  </div>
+
+  <!-- Panel content -->
+  <div class="cc-panel" id="panel"></div>
+
+</div>
+
+<!-- Modal container -->
+<div id="modalRoot"></div>
+
+<script>
+window.ROOM_CODE = "{{ room_code }}";
+window.HOST = "{{ host }}";
+</script>
+<script src="{% static 'presentation/js/control.js' %}"></script>
+</body>
+</html>
