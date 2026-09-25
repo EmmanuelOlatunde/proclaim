@@ -7,14 +7,23 @@ There are **two ways to get Proclaim**:
 
 | Artifact | What it is | Who it's for |
 |---|---|---|
-| **`Proclaim.zip`** | The **final, prebuilt Windows app** — the output of the bundle. Just run `Proclaim.exe`. | End users (no Python/installation needed) |
-| **`pro.zip`** | The **clean Windows build source** — everything needed to re-bundle, without dev artifacts. | Developers who want to build/change Proclaim |
+| **`Proclaim.zip`** | The **final, prebuilt Windows app** — the output of the bundle. Just run `Proclaim.exe`. Download it from the latest **Release** below. | End users (no Python/installation needed) |
+| **`pro.zip`** | The **clean Windows build source** — everything needed to re-bundle, without dev artifacts. Committed in this repo. | Developers who want to build/change Proclaim |
+
+> **Releases:** every published version of the ready-to-run app is attached to a
+> [GitHub Release](https://github.com/EmmanuelOlatunde/proclaim/releases).
+> The newest one is always at:
+> `https://github.com/EmmanuelOlatunde/proclaim/releases/latest/download/Proclaim.zip`
+> To publish an update, rebuild on Windows (`build_windows.bat`), zip `dist\Proclaim\`
+> into `Proclaim.zip`, and upload it as a new Release asset.
 
 ---
 
 ## Run it (end users — Windows 10/11 x64)
 
-1. Download **`Proclaim.zip`** and extract it anywhere (e.g. Desktop or USB stick).
+1. Download **`Proclaim.zip`** from the
+   [latest Release](https://github.com/EmmanuelOlatunde/proclaim/releases/latest/download/Proclaim.zip)
+   and extract it anywhere (e.g. Desktop or USB stick).
 2. Double-click **`Proclaim.exe`**. A console window opens showing the server banner and the
    web addresses to open. Windows Firewall will ask to allow network access — click **Allow**.
 3. Make sure the phone and laptop are on the **same Wi-Fi network**:
