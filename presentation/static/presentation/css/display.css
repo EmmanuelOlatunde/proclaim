@@ -2,13 +2,23 @@
    ChurchCast — Display canvas (pure 16:9, no chrome)
    ============================================================ */
 
+:root {
+  --d-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --d-mult: 1;
+  --d-fit: 1;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
   width: 100%; height: 100%;
   background: #05070A;
   overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-text-size-adjust: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: var(--d-font);
+  -webkit-font-smoothing: antialiased;
 }
 
 #display {
@@ -23,36 +33,45 @@ html, body {
   position: relative;
 }
 
-.d-stage.blank { background: #000; }
+.d-stage.blank { background: #000 !important; }
 .d-stage.blank .d-content { display: none; }
+
+.d-stage.has-bg .d-content {
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.65), 0 0 24px rgba(0, 0, 0, 0.35);
+}
 
 .d-content {
   text-align: center;
   max-width: 85%;
+  max-height: 92%;
   color: #F5F7FA;
 }
 
+/* --- element sizes are scaled by the operator's Text size setting (--d-mult)
+       and the display's auto fit-to-stage scale (--d-fit, min 60%) --- */
+
 /* Scripture */
-.d-scripture { display: flex; flex-direction: column; align-items: center; gap: 1.5vw; }
+.d-scripture { display: flex; flex-direction: column; align-items: center; gap: 2vw; }
 .d-scripture__ref {
-  font-size: clamp(2.5vw, 5vw, 4.5vw);
+  font-size: calc(clamp(2.5vw, 4.5vw, 4.2vw) * var(--d-mult) * var(--d-fit, 1));
   font-weight: 700;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
   color: #FFFFFF;
   text-transform: uppercase;
 }
 .d-scripture__text {
-  font-size: clamp(2vw, 3.5vw, 3.2vw);
+  font-size: calc(clamp(2vw, 3.4vw, 3.2vw) * var(--d-mult) * var(--d-fit, 1));
   font-weight: 400;
-  line-height: 1.6;
+  line-height: 1.65;
   color: #E8ECF1;
-  max-width: 75vw;
+  max-width: 76vw;
+  white-space: pre-wrap;
 }
 
 /* Songs */
 .d-song { display: flex; flex-direction: column; align-items: center; gap: 1vw; }
 .d-song__label {
-  font-size: clamp(0.9vw, 1.4vw, 1.5vw);
+  font-size: calc(clamp(0.9vw, 1.4vw, 1.5vw) * var(--d-mult));
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.2em;
@@ -60,7 +79,7 @@ html, body {
   margin-bottom: 0.5vw;
 }
 .d-song__text {
-  font-size: clamp(2.2vw, 4vw, 3.8vw);
+  font-size: calc(clamp(2.2vw, 4vw, 3.8vw) * var(--d-mult) * var(--d-fit, 1));
   font-weight: 500;
   line-height: 1.5;
   color: #F5F7FA;
@@ -71,13 +90,13 @@ html, body {
 /* Announcements */
 .d-announcement { display: flex; flex-direction: column; align-items: center; gap: 2vw; }
 .d-announcement__title {
-  font-size: clamp(3vw, 5.5vw, 5vw);
+  font-size: calc(clamp(3vw, 5.5vw, 5vw) * var(--d-mult));
   font-weight: 700;
   color: #FFFFFF;
   line-height: 1.2;
 }
 .d-announcement__body {
-  font-size: clamp(1.8vw, 3vw, 2.8vw);
+  font-size: calc(clamp(1.8vw, 3vw, 2.8vw) * var(--d-mult));
   font-weight: 400;
   line-height: 1.6;
   color: #C8D0DA;
@@ -92,14 +111,14 @@ html, body {
 /* Countdown */
 .d-countdown { display: flex; flex-direction: column; align-items: center; gap: 1.5vw; }
 .d-countdown__label {
-  font-size: clamp(1.5vw, 2.5vw, 2.2vw);
+  font-size: calc(clamp(1.5vw, 2.5vw, 2.2vw) * var(--d-mult));
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.3em;
   color: #9AA6B2;
 }
 .d-countdown__time {
-  font-size: clamp(6vw, 12vw, 10vw);
+  font-size: calc(clamp(6vw, 12vw, 10vw) * var(--d-mult));
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: #FFFFFF;

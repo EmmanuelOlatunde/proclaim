@@ -33,6 +33,9 @@ urlpatterns = [
     path("api/images/<int:image_id>", views.image_detail, name="image_detail"),
 
     # REST API — Scripture
+    path("api/scripture/translations", views.scripture_translations, name="scripture_translations"),
     path("api/scripture/parse", views.scripture_parse, name="scripture_parse"),
     path("api/scripture/books", views.scripture_books, name="scripture_books"),
+    path("api/scripture/index", views.scripture_index, name="scripture_index"),
+    path("api/scripture/chapter", views.scripture_chapter, name="scripture_chapter"),
 ]

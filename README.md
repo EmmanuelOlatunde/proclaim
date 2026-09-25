@@ -26,6 +26,9 @@ Then:
 - On the **laptop**: open `http://LAPTOP-IP:3000/display/CHURCH1`
 - In **vMix**: add the display URL as a Browser source
 
+`start.sh` prints your detected LAN address automatically. `create_room` on
+open is automatic — any room code creates its room on first use.
+
 ## Firewall
 
 The server listens on `0.0.0.0:3000` (all interfaces).
@@ -53,7 +56,10 @@ Do NOT expose port 3000 to the public Internet. The server is intended for LAN u
 
 - **Songs**: create, edit, delete, search; section-based navigation (Verse/Chorus/Bridge)
 - **Song Import**: paste plain text or ChordPro lyrics; auto-parses into sections
-- **Scripture**: bundled KJV passages; parse references like `John 3:16`, `Genesis 1:1-5`, `Psalm 23`
+- **Scripture**: the complete offline KJV is bundled (66 books, 31,102 verses,
+  `presentation/data/kjv.json`). References are parsed flexibly:
+  `John 3:16`, `Genesis 1:1-5`, `Psalm 23` / `Psalms 23`, `1 John 1:9`,
+  `Song of Solomon 2:1`, abbreviations like `Jn 3:16`. No Internet needed.
 - **Images**: upload from laptop, browse, search, present full-canvas
 - **Announcements**: title + body text slides
 - **Countdown Timer**: timestamp-synced (no per-second network traffic)
@@ -65,10 +71,26 @@ Do NOT expose port 3000 to the public Internet. The server is intended for LAN u
 
 ## Network Efficiency
 
-- Slide changes send only small state messages over WebSocket
-- No polling, no per-second countdown messages
-- Images loaded once and cached by the browser
-- Song content sent once when presented; only slide index changes on next/prev
+Three small message types keep slide changes cheap:
+
+- `{"type": "state", ...}` — full snapshot. Sent once when content changes
+  (present/queue-jump/clear/stop) and on (re)connect.
+- `{"type": "slide_change", "contentType", "itemId", "slideIndex", "slideCount"}`
+  — minimal navigation for next/prev/goto_slide. No content is retransmitted.
+- `{"type": "blank", "blank": bool}` — minimal blank toggle; position preserved.
+
+Countdowns sync by absolute `endTime` only — no per-second messages.
+No polling anywhere. Images load once and are cached by the browser.
+
+## Tests
+
+```bash
+.venv/bin/python manage.py test presentation
+```
+
+Covers scripture parsing (multi-word/numbered books), plain-text/ChordPro song
+import, and the full WebSocket protocol (present → minimal `slide_change` →
+`blank` → reconnection snapshot) via `channels.testing.WebsocketCommunicator`.
 
 ## Data
 

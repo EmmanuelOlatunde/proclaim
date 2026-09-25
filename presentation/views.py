@@ -2,12 +2,25 @@
 HTTP views — page rendering + JSON REST API.
 """
 import json
+import re
+
+from django.db.models import Q
 from django.http import JsonResponse, HttpResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import render
 from .models import Room, Song, SongSection, Announcement, ImageItem, QueueItem
 from .song_import import parse_import
-from .scripture import parse_reference, build_slides, _load_bible
+from .scripture import (
+    parse_reference,
+    build_slides,
+    normalize_book,
+    chapter_slides,
+    chapter_verse_count,
+    build_index,
+    _load_bible,
+    list_translations,
+    resolve_translation,
+)
 
 
 def _json_body(request):
@@ -81,11 +94,33 @@ def queue_manage(request, code):
 # --- Songs ---
 
 def song_list(request):
-    q = request.GET.get("q", "")
+    q = request.GET.get("q", "").strip()
+    language = request.GET.get("language", "").strip()
     songs = Song.objects.all()
+    if language:
+        songs = songs.filter(language=language)
     if q:
-        songs = songs.filter(title__icontains=q) | songs.filter(author__icontains=q)
-    return JsonResponse({"songs": [{"id": s.id, "title": s.title, "author": s.author} for s in songs]})
+        # Hymnal shortcut: "nnbh 8" / "ybh 12" -> abbr + hymn number.
+        # Abbreviations are search-only; never displayed as labels.
+        m = re.match(r"^(ybh|nnbh)\s+(\d+)$", q, re.IGNORECASE)
+        if m:
+            songs = songs.filter(source_abbr=m.group(1).upper(), number=int(m.group(2)))
+        elif q.isdigit():
+            # Bare number: match that hymn number in EITHER hymnal. When both
+            # hymnals have it, both come back (optionally filtered by language).
+            songs = songs.filter(number=int(q))
+        else:
+            # Text search across the display title, the original file title,
+            # and the actual verse/chorus body so remembered phrases match.
+            songs = songs.filter(
+                Q(title__icontains=q) |
+                Q(original_title__icontains=q) |
+                Q(sections__lyrics__icontains=q)
+            ).distinct()
+    return JsonResponse({"songs": [{
+        "id": s.id, "title": s.title, "author": s.author,
+        "language": s.language, "source": s.source, "number": s.number,
+    } for s in songs]})
 
 
 def song_detail(request, song_id):
@@ -212,20 +247,54 @@ def image_detail(request, image_id):
     if not img:
         return JsonResponse({"error": "not found"}, status=404)
     if request.method == "DELETE":
+        # Deleting an image that is the LIVE background of a room during a
+        # service would silently change what the congregation sees, so block
+        # it and name the room(s). The check runs against every room (room
+        # state references the background by image URL).
+        rooms = rooms_using_background(img.file.url)
+        if rooms:
+            detail = ", ".join(rooms)
+            return JsonResponse(
+                {"error": f"Image is the active background in: {detail}",
+                 "rooms": rooms},
+                status=409,
+            )
         img.file.delete(save=False)
         img.delete()
         return JsonResponse({"ok": True})
     return JsonResponse({"image": img.to_dict()})
 
 
+def rooms_using_background(image_url):
+    """Codes of every room whose current background is `image_url`.
+
+    Room state stores the background as styles.background = {type: "image",
+    value: <image URL>}; compare by URL. No room is ever hardcoded here.
+    """
+    rooms = []
+    for room in Room.objects.all():
+        state = room.get_state()
+        bg = (state.get("styles") or {}).get("background") or {}
+        if bg.get("type") == "image" and bg.get("value") == image_url:
+            rooms.append(room.code)
+    return rooms
+
+
 # --- Scripture ---
+
+def scripture_translations(request):
+    """Available translations: {id, full_name, license, book_count, verse_count}.
+    ids are full-name slugs; the UI must render only full_name."""
+    return JsonResponse({"translations": list_translations()})
+
 
 def scripture_parse(request):
     ref_str = request.GET.get("ref", "")
+    translation = resolve_translation(request.GET.get("translation"))
     ref = parse_reference(ref_str)
     if not ref:
         return JsonResponse({"error": "could not parse reference"}, status=400)
-    slides = build_slides(ref)
+    slides = build_slides(ref, translation=translation)
     if not slides:
         return JsonResponse({"error": "passage not found in local Bible"}, status=404)
     return JsonResponse({"reference": ref["display"], "slides": slides})
@@ -234,3 +303,52 @@ def scripture_parse(request):
 def scripture_books(request):
     bible = _load_bible()
     return JsonResponse({"books": list(bible.keys())})
+
+
+def scripture_index(request):
+    """Full 66-book picker index for a translation (default King James
+    Version). The verse counts come from that translation's data so the
+    chapter/verse grids always match what will be presented. Cheap to build
+    (in-memory cache) and browser-cacheable.
+    """
+    translation = resolve_translation(request.GET.get("translation"))
+    response = JsonResponse({
+        "books": build_index(translation),
+        "translation": translation,
+    })
+    response["Cache-Control"] = "public, max-age=86400"
+    return response
+
+
+def scripture_chapter(request):
+    """Preview source for one chapter (or a single verse of one chapter).
+
+    query params: book=<canonical or alias>, chapter=<int>[, verse=<int>,
+    translation=<id>]
+    """
+    translation = resolve_translation(request.GET.get("translation"))
+    book = normalize_book(request.GET.get("book", ""))
+    if not book:
+        return JsonResponse({"error": "unknown book"}, status=400)
+    try:
+        chapter = int(request.GET.get("chapter", ""))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "chapter must be a number"}, status=400)
+    verse_str = request.GET.get("verse", "")
+    try:
+        verse = int(verse_str) if verse_str else None
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "verse must be a number"}, status=400)
+    if verse is not None and (verse < 1 or verse > chapter_verse_count(book, chapter, translation)):
+        return JsonResponse({"error": "verse not found in local Bible"}, status=404)
+    slides = chapter_slides(book, chapter, translation)
+    if not slides:
+        return JsonResponse({"error": "chapter not found in local Bible"}, status=404)
+    if verse is not None:
+        slides = [s for s in slides if s["verse"] == verse]
+    return JsonResponse({
+        "reference": f"{book} {chapter}",
+        "book": book,
+        "chapter": chapter,
+        "slides": slides,
+    })

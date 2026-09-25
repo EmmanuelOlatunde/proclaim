@@ -23,6 +23,45 @@ SECTION_KEYWORDS = [
 ]
 
 
+def clean_hymn_title(title):
+    """Normalize a hymnal DISPLAY title only.
+
+    The Yoruba Baptist Hymnal uses first-line-as-title, so many titles keep a
+    stray sentence-initial all-caps first word and a trailing comma (e.g.
+    "EFI iyin fun Olorun,"). Fix those two things and nothing else: only the
+    first word may be recased, every other character stays byte-for-byte.
+    """
+    text = (title or "").strip()
+    while text.endswith(","):
+        text = text[:-1].rstrip()
+    m = re.match(r"^(\S+)", text)
+    if m and m.group(1).isupper():
+        word = m.group(1)
+        cleaned = word[0] + word[1:].lower()
+        text = cleaned + text[len(word):]
+    return text
+
+
+def split_hymn_sections(verses, chorus):
+    """Build SongSection definitions for one hymn.
+
+    Assumption (standard hymnal convention): a hymn with a non-empty chorus
+    plays V1, Chorus, V2, Chorus, V3, Chorus, ... — the chorus is repeated
+    after every verse. A single-verse hymn with a chorus is still V1, Chorus.
+    Hymns with no chorus are straight V1..Vn with no chorus sections.
+
+    Verse and chorus bodies are returned verbatim (byte-for-byte); only labels
+    and ordering are synthesized here.
+    """
+    has_chorus = bool(chorus and str(chorus).strip())
+    sections = []
+    for i, verse in enumerate(verses, start=1):
+        sections.append({"label": f"Verse {i}", "lyrics": str(verse)})
+        if has_chorus:
+            sections.append({"label": "Chorus", "lyrics": str(chorus)})
+    return sections
+
+
 def parse_plain_text(text):
     """Parse bracketed-section plain text into sections."""
     sections = []

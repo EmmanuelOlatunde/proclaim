@@ -4,6 +4,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0B0F14">
 <title>ChurchCast Control — {{ room_code }}</title>
 <link rel="stylesheet" href="{% static 'presentation/css/app.css' %}">
 </head>
@@ -20,7 +21,7 @@
     <span class="cc-top__title" id="liveTitle">—</span>
   </div>
 
-  <!-- Preview -->
+  <!-- Live preview -->
   <div class="cc-preview">
     <div class="cc-preview__canvas" id="previewCanvas">
       <div class="cc-preview__label" id="previewLabel">No content</div>
@@ -32,19 +33,10 @@
     </div>
     <div class="cc-preview__meta">
       <span class="cc-preview__slide-num" id="slideNum">0 / 0</span>
+      <span class="cc-preview__trans" id="previewTrans"></span>
       <span class="cc-preview__section-label" id="sectionLabel"></span>
     </div>
   </div>
-
-  <!-- Nav controls -->
-  <div class="cc-nav">
-    <button class="cc-nav__prev" id="prevBtn">◀ Prev</button>
-    <button class="cc-nav__blank" id="blankBtn">BLANK</button>
-    <button class="cc-nav__next" id="nextBtn">Next ▶</button>
-  </div>
-
-  <!-- Slide strip -->
-  <div class="cc-slides" id="slideStrip"></div>
 
   <!-- Tabs -->
   <div class="cc-tabs" id="tabs">
@@ -54,20 +46,41 @@
     <button class="cc-tab" data-tab="scripture">Scripture</button>
     <button class="cc-tab" data-tab="images">Images</button>
     <button class="cc-tab" data-tab="announcements">Announcements</button>
+    <button class="cc-tab" data-tab="style">Style</button>
   </div>
 
-  <!-- Panel content -->
+  <!-- Scrollable panel -->
   <div class="cc-panel" id="panel"></div>
+
+  <!-- Fixed broadcast dock: slide strip + Prev/Blank/Next + queue nav -->
+  <div class="cc-dock">
+    <div class="cc-slides" id="slideStrip" style="display:none"></div>
+    <div class="cc-nav">
+      <button class="cc-nav__prev" id="prevBtn">◀ <span>Prev</span></button>
+      <button class="cc-nav__blank" id="blankBtn">BLANK</button>
+      <button class="cc-nav__next" id="nextBtn"><span>Next</span> ▶</button>
+    </div>
+    <div class="cc-qnav">
+      <button class="cc-qnav__btn" id="qPrev" title="Previous service item">◀</button>
+      <span class="cc-qnav__pos" id="qPos">Service —</span>
+      <button class="cc-qnav__btn" id="qNext" title="Next service item">▶</button>
+      <button class="cc-qnav__btn cc-qnav__btn--cd" id="cdBtn" title="Countdown timer">⏱ 10:00</button>
+    </div>
+  </div>
 
 </div>
 
 <!-- Modal container -->
 <div id="modalRoot"></div>
 
+<!-- Toast (scripture errors etc.) -->
+<div id="toast" class="cc-toast" role="alert"></div>
+
 <script>
 window.ROOM_CODE = "{{ room_code }}";
 window.HOST = "{{ host }}";
 </script>
+<script src="{% static 'presentation/js/scripture-picker.js' %}"></script>
 <script src="{% static 'presentation/js/control.js' %}"></script>
 </body>
 </html>

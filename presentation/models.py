@@ -32,11 +32,22 @@ class Song(models.Model):
     author = models.CharField(max_length=200, blank=True, default="")
     ccli = models.CharField(max_length=32, blank=True, default="")
     raw_text = models.TextField(blank=True, default="")
+    original_title = models.CharField(max_length=200, blank=True, default="")
+    # "Yoruba" or "English" (full word, never a code) — separates the hymnals.
+    language = models.CharField(max_length=20, blank=True, default="")
+    # Hymnal of record, displayed to the operator (full name, never abbr).
+    source = models.CharField(max_length=120, blank=True, default="")
+    # Hymnal abbreviation + hymn number (search shortcut only, e.g. "nnbh 8").
+    source_abbr = models.CharField(max_length=16, blank=True, default="")
+    number = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["title"]
+        constraints = [
+            models.UniqueConstraint(fields=["source_abbr", "number"], name="uniq_hymnal_number"),
+        ]
 
     def __str__(self):
         return self.title
@@ -47,6 +58,11 @@ class Song(models.Model):
             "title": self.title,
             "author": self.author,
             "ccli": self.ccli,
+            "original_title": self.original_title,
+            "language": self.language,
+            "source": self.source,
+            "source_abbr": self.source_abbr,
+            "number": self.number,
             "sections": [s.to_dict() for s in self.sections.all()],
         }
 
