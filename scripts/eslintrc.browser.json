@@ -1,0 +1,10 @@
+{
+  "env": { "browser": true, "es6": true },
+  "globals": {
+    "BiblePicker": "readonly",
+    "splitSongSlides": "readonly",
+    "module": "readonly",
+    "globalThis": "readonly"
+  },
+  "rules": { "no-undef": "error" }
+}

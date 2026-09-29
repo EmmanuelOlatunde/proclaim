@@ -13,12 +13,19 @@ Messages sent by the server:
       Full snapshot. Sent on connect, get_state, and whenever the
       presented *content itself* changes (present_song / present_scripture /
       present_image / present_announcement / present_countdown /
-      goto_queue / clear / stop_countdown).
+      goto_queue / next_item / prev_item / next_chapter / prev_chapter /
+      clear / stop_countdown).
 
   {"type": "slide_change", "contentType": ..., "itemId": ..., "slideIndex": n,
    "slideCount": n}
       Minimal navigation message for next / prev / goto_slide. Carries no
       content; clients already hold the content from the full snapshot.
+      next / prev are strict within-item controls: at the first or last
+      slide they are ignored server-side (nothing saved, nothing
+      broadcast), so the operator can never walk into the next queue item
+      or across a chapter boundary by accident. Crossing items is done with
+      next_item / prev_item; crossing chapters with next_chapter /
+      prev_chapter.
 
   {"type": "blank", "blank": true|false}
       Minimal blank/unblank toggle. Position is preserved server-side.
@@ -61,18 +68,42 @@ Style messages
 """
 import time
 import json
+import re
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from asgiref.sync import sync_to_async
 from .models import Room, QueueItem, Song, SongSection, Announcement, ImageItem
 from .scripture import DEFAULT_TRANSLATION_ID
 
-STYLE_FONTS = ("default", "serif", "sans")
+STYLE_FONTS = ("default", "serif", "sans", "noto-sans", "noto-serif", "montserrat", "merriweather")
 STYLE_SIZES = ("sm", "md", "lg")
+STYLE_LINE_SPACING = ("tight", "normal", "loose")
+STYLE_ALIGN = ("center", "left")
+STYLE_SHADOW = ("auto", "off", "strong")
+STYLE_SIZE_MIN = 0.6
+STYLE_SIZE_MAX = 1.6
+STYLE_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 DEFAULT_STYLES = {
     "font": "default",
     "size": "md",
     "background": {"type": "color", "value": "#05070A"},
 }
+# Optional overrides: when absent the CSS keeps its built-in defaults, so the
+# wall looks exactly like it always has. A null/empty value sent here clears
+# the override and returns to that built-in default.
+OPTIONAL_STYLE_FIELDS = ("textColor", "referenceColor", "bold", "lineSpacing", "align", "shadow")
+
+
+def _valid_size(value):
+    """A size is either a named preset or a number in [0.6, 1.6] rounded to a 0.05 step."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        if value < STYLE_SIZE_MIN or value > STYLE_SIZE_MAX:
+            return None
+        return round(float(value) * 20) / 20
+    if isinstance(value, str) and value in STYLE_SIZES:
+        return value
+    return None
 
 
 class RoomConsumer(AsyncJsonWebsocketConsumer):
@@ -101,19 +132,31 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
         state = await self.get_room_state()
 
         if action == "next":
-            crossed = await self._advance(state, +1)
-            await self.save_room_state(state)
-            if crossed:
-                await self.broadcast_full(state)
-            else:
+            if await self._step(state, +1):
+                await self.save_room_state(state)
                 await self.broadcast_slide(state)
         elif action == "prev":
-            crossed = await self._advance(state, -1)
-            await self.save_room_state(state)
-            if crossed:
-                await self.broadcast_full(state)
-            else:
+            if await self._step(state, -1):
+                await self.save_room_state(state)
                 await self.broadcast_slide(state)
+        elif action == "next_item":
+            qi = int(state.get("queueIndex", -1))
+            if qi >= 0 and await self._goto_queue(state, qi + 1):
+                await self.save_room_state(state)
+                await self.broadcast_full(state)
+        elif action == "prev_item":
+            qi = int(state.get("queueIndex", -1))
+            if qi >= 0 and await self._goto_queue(state, qi - 1):
+                await self.save_room_state(state)
+                await self.broadcast_full(state)
+        elif action == "next_chapter":
+            if await self._cross_scripture(state, +1):
+                await self.save_room_state(state)
+                await self.broadcast_full(state)
+        elif action == "prev_chapter":
+            if await self._cross_scripture(state, -1):
+                await self.save_room_state(state)
+                await self.broadcast_full(state)
         elif action == "goto_slide":
             idx = int(cmd.get("slideIndex", 0))
             state["slideIndex"] = max(0, min(idx, max(0, state.get("slideCount", 1) - 1)))
@@ -192,7 +235,7 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
         sections = await sync_to_async(list)(song.sections.all())
         slides = []
         for s in sections:
-            for chunk in _split_lyrics(s.lyrics):
+            for chunk in split_song_slides(s.lyrics):
                 slides.append({"label": s.label, "text": chunk})
         if not slides:
             slides = [{"label": "", "text": song.title}]
@@ -213,8 +256,9 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
 
         The chapter is the load unit and the verse is the navigation unit:
         the whole chapter is loaded as one-slide-per-verse and slideIndex
-        points at verse-1, so Prev/Next walk the chapter (and cross at its
-        edges via _advance/_cross_scripture).
+        points at verse-1, so Prev/Next walk the chapter within it. Crossing
+        into the adjacent chapter is done explicitly with the next_chapter /
+        prev_chapter commands (never by plain next/prev).
 
         An optional "translation" key overrides the room's stored translation
         for this presentation; otherwise the room's active translation is
@@ -275,10 +319,18 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
         img = await sync_to_async(ImageItem.objects.filter(id=img_id).first)()
         if not img:
             return False
+        await sync_to_async(img.ensure_variants)()
         state.update({
             "contentType": "image",
             "itemId": img.id,
-            "content": {"url": img.file.url, "title": img.title},
+            "content": {
+                "url": img.file.url,
+                "title": img.title,
+                "fit": img.fit_value(),
+                # The display never blurs at runtime; the pre-blurred strong
+                # variant is the backdrop for the default "blur" fit.
+                "backdrop": img.variant_url("strong"),
+            },
             "slideIndex": 0,
             "slideCount": 1,
             "countdown": None,
@@ -305,11 +357,50 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
         cur = state.setdefault("styles", dict(DEFAULT_STYLES))
         if styles.get("font") in STYLE_FONTS:
             cur["font"] = styles["font"]
-        if styles.get("size") in STYLE_SIZES:
-            cur["size"] = styles["size"]
+        size = _valid_size(styles.get("size"))
+        if size is not None:
+            cur["size"] = size
         bg = styles.get("background")
         if isinstance(bg, dict) and bg.get("type") in ("color", "image") and bg.get("value"):
             cur["background"] = {"type": bg["type"], "value": str(bg["value"])}
+            if bg["type"] == "image":
+                # Blur level selects which PRE-BLURRED variant the display
+                # loads (no runtime CSS filter). Anything else means "off".
+                blur = str(bg.get("blur") or "off").lower()
+                cur["background"]["blur"] = blur if blur in ("off", "soft", "strong") else "off"
+        for field in OPTIONAL_STYLE_FIELDS:
+            if field in styles:
+                self._apply_optional_style(cur, field, styles[field])
+
+    @staticmethod
+    def _apply_optional_style(cur, field, raw):
+        """Validate one optional text-style field. A null/empty value clears
+        the stored override so the CSS default shows again; anything invalid
+        is ignored silently."""
+        if field in ("textColor", "referenceColor"):
+            if raw is None or raw == "":
+                cur.pop(field, None)
+            elif isinstance(raw, str) and STYLE_HEX_RE.match(raw):
+                cur[field] = raw.lower()
+            return
+        if field == "bold":
+            if raw is None:
+                cur.pop("bold", None)
+            elif isinstance(raw, bool):
+                cur["bold"] = raw
+            return
+        if field == "lineSpacing" and raw in STYLE_LINE_SPACING:
+            cur["lineSpacing"] = raw
+        elif field == "lineSpacing" and raw is None:
+            cur.pop("lineSpacing", None)
+        if field == "align" and raw in STYLE_ALIGN:
+            cur["align"] = raw
+        elif field == "align" and raw is None:
+            cur.pop("align", None)
+        if field == "shadow" and raw in STYLE_SHADOW:
+            cur["shadow"] = raw
+        elif field == "shadow" and raw is None:
+            cur.pop("shadow", None)
 
     def _set_translation(self, state, value):
         """Set the room's active scripture translation. Returns False (and
@@ -344,34 +435,26 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
             return True
         return False
 
-    async def _advance(self, state, delta):
-        """Move forward/back one slide. Returns True if the boundary was
-        crossed (full-state change). Otherwise returns False (only the slide
-        index moved).
+    async def _step(self, state, delta):
+        """Move one slide within the current item only.
 
-        Scripture content loaded as a whole chapter: at the chapter edges the
-        plain next/prev controls cross into the adjacent chapter server-side
-        (Genesis 1:1 / Revelation 22:22 clamp). Otherwise, when inside a
-        service queue, the boundary crosses into the next queue item.
+        Returns True when the position actually moved (a minimal
+        slide_change should be broadcast); at the item's first or last
+        slide it is a strict no-op — the state is untouched and nothing is
+        saved or broadcast. Item navigation belongs to next_item / prev_item
+        and chapter navigation to next_chapter / prev_chapter.
         """
         count = max(1, state.get("slideCount", 1))
         idx = int(state.get("slideIndex", 0)) + delta
         if 0 <= idx < count:
             state["slideIndex"] = idx
-            return False
-        if state.get("contentType") == "scripture":
-            if await self._cross_scripture(state, delta):
-                return True
-        qi = state.get("queueIndex", -1)
-        if qi >= 0:
-            if await self._goto_queue(state, qi + delta):
-                return True
-        state["slideIndex"] = max(0, min(idx, count - 1))
+            return True
         return False
 
     async def _cross_scripture(self, state, delta):
-        """Cross into the adjacent chapter when the operator navigates past
-        the end (delta +1) or start (delta -1) of a presented chapter."""
+        """Cross into the adjacent chapter. Driven only by the explicit
+        chapter buttons (next_chapter / prev_chapter) — plain next/prev
+        never auto-advance a chapter."""
         from .scripture import adjacent_chapter, chapter_slides, resolve_translation
         content = state.get("content") or {}
         book = content.get("book")
@@ -448,17 +531,49 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json(event["payload"])
 
 
-def _split_lyrics(text, max_lines=6):
-    """Split lyrics into slide-sized chunks by blank line or max lines."""
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-    if not paragraphs:
+def split_song_slides(text, max_lines=6):
+    """Split lyric text into slide-sized chunks.
+
+    A section stays on ONE slide whenever it is ``max_lines`` lines or fewer.
+    Longer sections are cut at line boundaries into balanced chunks (a
+    10-line section becomes 5+5, never 6+4). Blank lines separate paragraphs
+    and are split first. Line bytes are preserved unchanged.
+
+    Mirrors ``splitSongSlides`` in presentation/js/song-slides.js — keep the
+    two implementations identical (see presentation/data/song_slides_fixtures.json).
+    """
+    if text is None:
+        return []
+    text = str(text)
+    paras = []
+    cur = []
+    for ln in text.split("\n"):
+        if ln.strip(" \t\u00a0") == "":
+            if cur:
+                paras.append(cur)
+                cur = []
+        else:
+            cur.append(ln)
+    if cur:
+        paras.append(cur)
+    if not paras:
         return [text]
     slides = []
-    for para in paragraphs:
-        lines = para.split("\n")
-        if len(lines) <= max_lines:
-            slides.append(para)
-        else:
-            for i in range(0, len(lines), max_lines):
-                slides.append("\n".join(lines[i:i + max_lines]))
+    for para in paras:
+        n = len(para)
+        if n <= max_lines:
+            slides.append("\n".join(para))
+            continue
+        chunks = (n + max_lines - 1) // max_lines
+        base, rem = divmod(n, chunks)
+        idx = 0
+        for c in range(chunks):
+            size = base + (1 if c < rem else 0)
+            slides.append("\n".join(para[idx:idx + size]))
+            idx += size
     return slides
+
+
+def _split_lyrics(text, max_lines=6):
+    """Back-compat alias for split_song_slides()."""
+    return split_song_slides(text, max_lines)

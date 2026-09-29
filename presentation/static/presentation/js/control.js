@@ -46,6 +46,8 @@
   var blankBtn = el("blankBtn");
   var qPrevBtn = el("qPrev");
   var qNextBtn = el("qNext");
+  var qPrevTitle = el("qPrevTitle");
+  var qNextTitle = el("qNextTitle");
   var qPos = el("qPos");
   var cdBtn = el("cdBtn");
 
@@ -132,7 +134,13 @@
         opts.body = JSON.stringify(body);
       }
     }
-    return fetch(path, opts).then(function (r) { return r.json(); });
+    return fetch(path, opts).then(function (r) {
+      return r.json().catch(function () {
+        var e = new Error("HTTP " + r.status + " from " + path);
+        e.status = r.status;
+        throw e;
+      });
+    });
   }
 
   // --- Preview rendering ---
@@ -148,26 +156,97 @@
   var FONTS = {
     default: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
     sans: '"Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-    serif: 'Georgia, Cambria, "Times New Roman", serif'
+    serif: 'Georgia, Cambria, "Times New Roman", serif',
+    "noto-sans": '"Noto Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    "noto-serif": '"Noto Serif", Georgia, Cambria, "Times New Roman", serif',
+    montserrat: '"Montserrat", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    merriweather: '"Merriweather", Georgia, Cambria, "Times New Roman", serif'
+  };
+  var FONT_NAMES = {
+    default: "System (default)",
+    sans: "Sans",
+    serif: "Serif",
+    "noto-sans": "Noto Sans",
+    "noto-serif": "Noto Serif",
+    montserrat: "Montserrat",
+    merriweather: "Merriweather"
   };
   var SIZE_SCALE = { sm: "0.82", md: "1", lg: "1.18" };
+  var SIZE_SCALE_NUM = { sm: 0.82, md: 1, lg: 1.18 };
+  var LINE_SCALE = { tight: "1.3", normal: "1.5", loose: "1.8" };
+  var SIZE_LABELS = { sm: "Small", md: "Medium", lg: "Large" };
+  var LINE_LABELS = { tight: "Tight", normal: "Normal", loose: "Loose" };
+  var TEXT_COLORS = ["#FFFFFF", "#FFF7E6", "#FFE86A", "#A8D4FF", "#000000"];
+  var SHADOW_LABELS = { auto: "Automatic", off: "Off", strong: "Strong" };
 
   function stateStyles() {
     return (state && state.styles) ||
       { font: "default", size: "md", background: { type: "color", value: "#05070A" } };
   }
 
-  // Font/size are CSS vars on <html> so every preview inherits them.
+  function sizeFactor(size) {
+    if (typeof size === "number") return String(size);
+    return SIZE_SCALE[size] || "1";
+  }
+
+  function setCssVar(root, name, value) {
+    if (value === "" || value == null) root.style.removeProperty(name);
+    else root.style.setProperty(name, value);
+  }
+
+  // Mirror of display.js textShadowFor: auto applies a dark shadow to light
+  // text and a light shadow to dark text, and is always on for images.
+  function textShadowFor(styles, bgIsImage) {
+    var mode = styles.shadow || "auto";
+    if (mode === "off") return "none";
+    var hex = /^#[0-9a-f]{6}$/.test(styles.textColor) ? styles.textColor : "#F5F7FA";
+    var light = (parseInt(hex.slice(1, 3), 16) * 0.299 +
+      parseInt(hex.slice(3, 5), 16) * 0.587 +
+      parseInt(hex.slice(5, 7), 16) * 0.114) > 150;
+    if (mode === "strong") {
+      return light
+        ? "0 2px 6px rgba(0,0,0,0.7), 0 6px 30px rgba(0,0,0,0.55)"
+        : "0 2px 6px rgba(255,255,255,0.6), 0 6px 30px rgba(255,255,255,0.4)";
+    }
+    if (!light && !bgIsImage) return "0 1px 3px rgba(255,255,255,0.55), 0 0 18px rgba(255,255,255,0.25)";
+    return "0 1px 4px rgba(0,0,0,0.65), 0 0 24px rgba(0,0,0,0.35)";
+  }
+
+  // Font/size/colour are CSS vars on <html> so every preview inherits them.
   function applyStylesGlobally(styles) {
     styles = styles || {};
-    document.documentElement.style.setProperty("--d-font", FONTS[styles.font] || FONTS.default);
-    document.documentElement.style.setProperty("--d-mult", SIZE_SCALE[styles.size] || "1");
+    var root = document.documentElement;
+    root.style.setProperty("--d-font", FONTS[styles.font] || FONTS.default);
+    root.style.setProperty("--d-mult", sizeFactor(styles.size));
+    setCssVar(root, "--d-color", styles.textColor);
+    setCssVar(root, "--d-ref-color", styles.referenceColor);
+    setCssVar(root, "--d-weight", styles.bold ? "700" : "");
+    setCssVar(root, "--d-line", LINE_SCALE[styles.lineSpacing]);
+    setCssVar(root, "--d-align", styles.align === "left" ? "left" : "");
+    var bgIsImage = (styles.background || {}).type === "image" && !!(styles.background || {}).value;
+    setCssVar(root, "--d-shadow", textShadowFor(styles, bgIsImage));
+    warmFonts(styles.font);
+  }
+
+  // Preloads the selected face so the preview paints it immediately.
+  function warmFonts(fontKey) {
+    if (!document || !document.fonts || typeof document.fonts.load !== "function") return;
+    var fam = FONTS[fontKey];
+    if (!fam) return;
+    var name = (fam.match(/^"([^"]+)"/) || [])[1];
+    if (!name) return;
+    try {
+      document.fonts.load('400 20px "' + name + '"');
+      document.fonts.load('700 20px "' + name + '"');
+    } catch (e) {}
   }
 
   function applyBgTo(el, styles) {
     var bg = (styles || {}).background || {};
     if (bg.type === "image" && bg.value) {
-      el.style.backgroundImage = "url('" + bg.value + "')";
+      var src = bg.value;
+      if (bg.blur === "soft" || bg.blur === "strong") src = imageVariantUrl(src, bg.blur);
+      el.style.backgroundImage = "url('" + src + "')";
       el.style.backgroundSize = "cover";
       el.style.backgroundPosition = "center";
       el.style.backgroundColor = "#05070A";
@@ -177,6 +256,30 @@
       el.style.backgroundColor = (bg.type === "color" && bg.value) ? bg.value : "#05070A";
       el.classList.remove("has-bg");
     }
+  }
+
+  // Variant convention: /media/images/<uuid>.jpg -> /media/images/<uuid>.soft.jpg
+  function imageVariantUrl(url, kind) {
+    if (!url || !kind) return url || "";
+    var i = url.lastIndexOf(".");
+    if (i <= 0) return url;
+    return url.slice(0, i) + "." + kind + url.slice(i);
+  }
+
+  var FIT_LABELS = {
+    blur: "Fit with blurred sides",
+    contain: "Fit whole image (black bars)",
+    cover: "Fill screen (crops edges)"
+  };
+  var BLUR_LABELS = { off: "Off", soft: "Soft", strong: "Strong" };
+  var FITS = ["blur", "contain", "cover"];
+  var MAX_IMAGES = 20;
+  var MAX_IMAGE_BYTES = 15 * 1024 * 1024;
+
+  function fmtBytes(n) {
+    if (!n) return "";
+    if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + " MB";
+    return Math.max(1, Math.round(n / 1024)) + " KB";
   }
 
   // Builds inner HTML for the given content, mirroring display.js.
@@ -202,7 +305,13 @@
         '<div class="cc-mini__title">' + esc(c.title || "") + "</div>" +
         (c.body ? '<div class="cc-mini__text">' + esc(c.body) + "</div>" : "");
     } else if (ct === "image") {
-      html = '<div class="cc-mini__image"><img src="' + esc(c.url || "") + '" alt=""></div>';
+      var fit = c.fit || "blur";
+      var back = c.backdrop || imageVariantUrl(c.url || "", "strong");
+      html = '<div class="d-image d-image--' + esc(fit) + '">';
+      if (fit === "blur" && back) {
+        html += '<div class="d-image__backdrop"><img src="' + esc(back) + '" alt=""></div>';
+      }
+      html += '<img class="d-image__front" src="' + esc(c.url || "") + '" alt=""></div>';
     } else if (ct === "countdown") {
       html = '<div class="cc-mini__countdown-label">' + esc(c.title || "") + "</div>" +
         '<div class="cc-mini__countdown">0:00</div>';
@@ -361,8 +470,8 @@
             (isLast ? nextLabel + " ▶" : "▶") + "</button>" +
           '<button type="button" class="cc-vstrip__btn cc-vstrip__jump" id="vsJump" aria-label="Jump to verse">Verses</button>' +
         "</div>";
-      el("vsPrev").onclick = function () { cmd("prev"); };
-      el("vsNext").onclick = function () { cmd("next"); };
+      el("vsPrev").onclick = function () { cmd(isFirst ? "prev_chapter" : "prev"); };
+      el("vsNext").onclick = function () { cmd(isLast ? "next_chapter" : "next"); };
       el("vsJump").onclick = function () { openVersesJump(); };
       return;
     }
@@ -402,6 +511,11 @@
     el("vsClose").onclick = closeModal;
   }
 
+  function setDim(btn, off) {
+    btn.disabled = off;
+    btn.classList.toggle("is-off", off);
+  }
+
   function renderNavState() {
     if (!state) return;
     if (state.blank) {
@@ -411,6 +525,15 @@
       blankBtn.classList.remove("active");
       blankBtn.textContent = "BLANK";
     }
+    // Slide controls are within-item only; items without slides (image,
+    // announcement, countdown) get both sides disabled.
+    var hasSlides = !!(state.content && state.content.slides && state.content.slides.length);
+    var idx = state.slideIndex || 0;
+    var count = state.slideCount || (hasSlides ? state.content.slides.length : 0);
+    setDim(prevBtn, !(hasSlides && idx > 0));
+    setDim(nextBtn, !(hasSlides && count > 1 && idx < count - 1));
+    var hint = el("navHint");
+    if (hint) hint.hidden = !(hasSlides && count > 1 && idx >= count - 1);
   }
 
   // --- Queue UI (highlight + dock position) ---
@@ -426,6 +549,18 @@
       var label = queue[qidx] ? queueItemLabel(queue[qidx]) : "";
       qPos.textContent = (qidx + 1) + "/" + queue.length + (label ? " · " + label : "");
     }
+    // Item nav sits on the queue pointer alone — never on ad-hoc content.
+    var n = queue.length;
+    var prevItem = (qidx > 0) ? queue[qidx - 1] : null;
+    var nextItem = (qidx >= 0 && qidx < n - 1) ? queue[qidx + 1] : null;
+    setDim(qPrevBtn, !prevItem);
+    setDim(qNextBtn, !nextItem);
+    var pt = prevItem ? queueItemLabel(prevItem) : "";
+    var nt = nextItem ? queueItemLabel(nextItem) : "";
+    if (qPrevTitle) qPrevTitle.textContent = pt;
+    if (qNextTitle) qNextTitle.textContent = nt;
+    qPrevBtn.title = pt ? "Previous item: " + pt : "Previous service item";
+    qNextBtn.title = nt ? "Next item: " + nt : "Next service item";
     // Highlight active queue row without refetching
     panel.querySelectorAll("[data-queue-idx]").forEach(function (row) {
       var on = parseInt(row.dataset.queueIdx) === qidx;
@@ -982,19 +1117,32 @@
 
   function renderImages() {
     var html = '<div class="cc-panel__search"><input class="cc-input" id="imgSearch" placeholder="Search images…"></div>';
-    html += '<button class="cc-btn cc-btn--block" id="uploadBtn" style="margin-bottom:12px">+ Upload Image</button>';
-    html += '<input type="file" id="imgFile" accept="image/*" style="display:none">';
+    html += '<button class="cc-btn cc-btn--block" id="uploadBtn" style="margin-bottom:12px">+ Upload Images</button>';
+    html += '<input type="file" id="imgFile" accept="image/*" multiple style="display:none">';
+    html += '<div id="imgUploadList"></div>';
     html += '<div class="cc-panel__list" id="imgList"></div>';
     panel.innerHTML = html;
     var search = el("imgSearch");
     function doSearch() {
-      api("/api/images?q=" + encodeURIComponent(search.value)).then(function (res) {
+      // The Images tab may have been replaced (tab switch) while an upload
+      // was finishing; never touch a detached panel or its DOM.
+      var s = el("imgSearch");
+      if (!s || !panel.contains(s)) return;
+      api("/api/images?q=" + encodeURIComponent(s.value)).then(function (res) {
+        var list = el("imgList");
+        if (!list || !panel.contains(list)) return;
         var imgs = res.images || [];
         var html = "";
         imgs.forEach(function (i) {
+          var fits = FITS.map(function (f) {
+            return '<option value="' + f + '"' + ((i.fit || "blur") === f ? " selected" : "") + ">" + FIT_LABELS[f] + "</option>";
+          }).join("");
           html += '<div class="cc-item">' +
-            '<img class="cc-item__thumb" src="' + i.url + '">' +
-            '<div class="cc-item__body"><div class="cc-item__title">' + esc(i.title || "Image") + '</div></div>' +
+            '<img class="cc-item__thumb" src="' + esc(i.thumb || i.url) + '">' +
+            '<div class="cc-item__body"><div class="cc-item__title">' + esc(i.title || "Image") + '</div>' +
+            '<div class="cc-item__sub">' +
+              '<select class="cc-fit-select" data-fit-image="' + i.id + '">' + fits + "</select>" +
+            "</div></div>" +
             '<div class="cc-item__actions">' +
               '<button class="cc-item__btn" data-preview-image="' + i.id + '">Prev</button>' +
               '<button class="cc-item__btn cc-item__btn--present" data-present-image="' + i.id + '">Present</button>' +
@@ -1003,8 +1151,20 @@
             '</div></div>';
         });
         if (!html) html = '<div class="cc-empty">No images uploaded yet.</div>';
-        el("imgList").innerHTML = html;
+        list.innerHTML = html;
         bindPresentButtons();
+        panel.querySelectorAll("[data-fit-image]").forEach(function (sel) {
+          sel.onchange = function () {
+            var imgId = parseInt(sel.dataset.fitImage);
+            api("/api/images/" + imgId, "POST", { fit: sel.value }).then(function () {
+              // If this image is live on the wall, re-present so the new
+              // fit reaches the display immediately (full state broadcast).
+              if (state && state.contentType === "image" && state.itemId === imgId) {
+                cmd("present_image", { id: imgId });
+              }
+            });
+          };
+        });
         panel.querySelectorAll("[data-preview-image]").forEach(function (b) {
           b.onclick = function () { previewImage(parseInt(b.dataset.previewImage)); };
         });
@@ -1036,14 +1196,89 @@
     var fileInput = el("imgFile");
     el("uploadBtn").onclick = function () { fileInput.click(); };
     fileInput.onchange = function () {
-      var f = fileInput.files[0];
-      if (!f) return;
-      var fd = new FormData();
-      fd.append("file", f);
-      fd.append("title", f.name.replace(/\.[^.]+$/, ""));
-      api("/api/images/upload", "POST", fd).then(doSearch);
+      handleImageBatch(fileInput.files);
       fileInput.value = "";
     };
+    currentImagesRefresh = doSearch;
+  }
+
+  // Sequential, one-at-a-time upload with a per-file status row. One failed
+  // file never aborts the rest, and nothing is uploaded in parallel (phone
+  // hotspot bandwidth).
+  var currentImagesRefresh = null;
+  var batchActive = false;
+  function handleImageBatch(files) {
+    var wrap = el("imgUploadList");
+    if (!wrap) return;
+    // Mobile file pickers can deliver more than one 'change'; keep a running
+    // batch authoritative so overlapping batches can't corrupt the rows or
+    // the "n of N" counter.
+    if (batchActive) return;
+    batchActive = true;
+    var input = el("imgFile");
+    if (input) input.disabled = true;
+
+    var list = Array.prototype.slice.call(files, 0);
+    var chosen = list.slice(0, MAX_IMAGES);
+    var overflow = list.length - chosen.length;
+    var total = chosen.length;
+    var done = 0;
+
+    var rows = chosen.map(function (f, i) {
+      return '<div class="cc-up-row" id="up' + i + '">' +
+        '<span class="cc-up-row__name">' + esc(f.name || "file") + '</span>' +
+        '<span class="cc-up-row__size">' + fmtBytes(f.size) + '</span>' +
+        '<span class="cc-up-row__status" id="upst' + i + '">waiting…</span>' +
+      "</div>";
+    }).join("");
+    if (overflow > 0) {
+      rows += '<div class="cc-up-row"><span class="cc-up-row__name">' + overflow +
+        ' more skipped — batch limit is ' + MAX_IMAGES + ' files</span></div>';
+    }
+    wrap.innerHTML = '<div class="cc-up-count" id="imgUpCount">0 of ' + total + '</div>' + rows;
+
+    function setStatus(i, text, cls) {
+      var s = el("upst" + i);
+      if (s) { s.textContent = text; s.className = "cc-up-row__status" + (cls ? " " + cls : ""); }
+    }
+    // One counter increment per file, no matter what. A throw inside a success
+// handler must not re-route into the ".catch" and flip a working upload to
+// "failed" or bump the count twice (seen live as "2 of 1").
+    function advance(i, text, cls) {
+      setStatus(i, text, cls);
+      done += 1;
+      var c = el("imgUpCount");
+      if (c) c.textContent = done + " of " + total;
+      try { next(i + 1); } catch (e) { console.error("upload next() threw:", e); finish(); }
+    }
+    function next(i) {
+      if (i >= chosen.length) { finish(); return; }
+      var f = chosen[i];
+      if (f.size > MAX_IMAGE_BYTES) { advance(i, "failed — larger than 15 MB", "err"); return; }
+      setStatus(i, "uploading…", "busy");
+      var fd = new FormData();
+      fd.append("file", f);
+      fd.append("title", (f.name || "").replace(/\.[^.]+$/, ""));
+      api("/api/images/upload", "POST", fd).then(function (res) {
+        if (res && res.duplicate) advance(i, "skipped — already uploaded", "dup");
+        else if (res && res.error) advance(i, "failed — " + res.error, "err");
+        else advance(i, "done", "ok");
+      }).catch(function (err) {
+        var why = err && err.status ? "server returned HTTP " + err.status : "request error";
+        advance(i, "failed — " + why, "err");
+      });
+    }
+    function finish() {
+      batchActive = false;
+      var btn = el("uploadBtn");
+      if (btn) btn.disabled = false;
+      var inp = el("imgFile");
+      if (inp) inp.disabled = false;
+      try { currentImagesRefresh(); } catch (e) { console.error("upload refresh threw:", e); }
+    }
+    var btn = el("uploadBtn");
+    if (btn) btn.disabled = true;
+    next(0);
   }
 
   function renderAnnouncements() {
@@ -1099,32 +1334,121 @@
 
   function renderStyle() {
     var st = JSON.parse(JSON.stringify(stateStyles()));
+    var bgType = st.background && st.background.type;
+
+    function optFont(key) {
+      var fam = FONTS[key];
+      var style = (FONTS[key] && key !== "default" && key !== "sans" && key !== "serif")
+        ? ' style="font-family:' + (fam.match(/^"([^"]+)"/) || [])[1] + '"'
+        : "";
+      return '<option value="' + key + '"' + style + ">" + FONT_NAMES[key] + "</option>";
+    }
+    var fontOptions = Object.keys(FONT_NAMES).map(optFont).join("");
+
+    function colorRow(id, label, current) {
+      var sw = TEXT_COLORS.map(function (hex) {
+        return '<button class="cc-color-swatch' + (current === hex ? " active" : "") +
+          '" data-color="' + hex + '" style="background:' + hex + '" title="' + hex + '"></button>';
+      }).join("");
+      return '<div class="cc-field"><label>' + label + '</label>' +
+        '<div class="cc-color-row" id="' + id + '">' + sw +
+        '<label class="cc-custom-color"><input type="color" id="' + id + 'Custom" value="' + (current || "#FFFFFF") +
+        '"><span>Custom</span></label></div>' +
+        '<div class="cc-warn" id="' + id + 'Warn" style="display:none"></div></div>';
+    }
+
+    var sizePct = Math.round(((typeof st.size === "number" ? st.size : (SIZE_SCALE_NUM[st.size] || 1)) * 100));
+
+    function seg(id, pairs, current, extra) {
+      return pairs.map(function (p) {
+        return '<button class="cc-btn' + (current === p[0] ? " active" : "") + '" data-' + extra + '="' + p[0] + '">' + p[1] + "</button>";
+      }).join("");
+    }
+
     var swatches = BG_COLORS.map(function (hex) {
-      return '<button class="cc-bg-swatch' + (st.background.type === "color" && st.background.value === hex ? " active" : "") +
+      return '<button class="cc-bg-swatch' + (bgType === "color" && st.background.value === hex ? " active" : "") +
         '" data-bg-color="' + hex + '" style="background:' + hex + '"></button>';
     }).join("");
+
     var html =
       '<div class="cc-field"><div class="cc-mini-preview"><div class="cc-mini-preview__inner" id="styleMiniInner"></div></div></div>' +
-      '<div class="cc-field"><label>Font</label><select class="cc-input" id="stFont">' +
-        '<option value="default">System (default)</option>' +
-        '<option value="serif">Serif</option>' +
-        '<option value="sans">Sans</option>' +
-      "</select></div>" +
-      '<div class="cc-field"><label>Text size</label><div class="cc-size-seg" id="stSize">' +
-        '<button class="cc-btn' + (st.size === "sm" ? " active" : "") + '" data-size="sm">Small</button>' +
-        '<button class="cc-btn' + (st.size === "md" ? " active" : "") + '" data-size="md">Medium</button>' +
-        '<button class="cc-btn' + (st.size === "lg" ? " active" : "") + '" data-size="lg">Large</button>' +
+      '<div class="cc-field"><label>Font</label><select class="cc-input" id="stFont">' + fontOptions + "</select></div>" +
+      colorRow("stTxt", "Text color", st.textColor) +
+      colorRow("stRef", "Reference color", st.referenceColor) +
+      '<div class="cc-field"><label>Text size</label>' +
+        '<div class="cc-size-row"><input type="range" class="cc-size-slider" id="stSizeSlider" min="60" max="160" step="5" value="' + sizePct + '">' +
+        '<span class="cc-size-pct" id="stSizePct">' + sizePct + '%</span></div></div>' +
+      '<div class="cc-field"><label>Bold text</label><div class="cc-size-seg">' +
+        '<button class="cc-btn' + (st.bold ? " active" : "") + '" data-bold="1" id="stBold">On</button>' +
+        '<button class="cc-btn' + (!st.bold ? " active" : "") + '" data-bold="0" id="stBoldOff">Off</button></div></div>' +
+      '<div class="cc-field"><label>Line spacing</label><div class="cc-size-seg" id="stLine">' +
+        seg("stLine", [["tight", LINE_LABELS.tight], ["normal", LINE_LABELS.normal], ["loose", LINE_LABELS.loose]], st.lineSpacing || "normal", "line") +
       "</div></div>" +
+      '<div class="cc-field"><label>Alignment</label><div class="cc-size-seg" id="stAlign">' +
+        seg("stAlign", [["center", "Center"], ["left", "Left"]], st.align || "center", "al") +
+      "</div></div>" +
+      '<div class="cc-field"><label>Text shadow</label><div class="cc-size-seg" id="stShadow">' +
+        seg("stShadow", [["auto", SHADOW_LABELS.auto], ["off", SHADOW_LABELS.off], ["strong", SHADOW_LABELS.strong]], st.shadow || "auto", "sh") +
+      "</div></div>" +
+      '<button class="cc-btn cc-btn--ghost cc-btn--block" id="stReset">Reset text style</button>' +
       '<div class="cc-field"><label>Background color</label><div class="cc-bg-colors" id="stBgColors">' + swatches + "</div></div>" +
       '<div class="cc-field"><label>Or background image</label><div class="cc-bg-images" id="stBgImages"></div></div>' +
+      '<div class="cc-field" id="stBlurWrap"><label>Background image blur</label><div class="cc-size-seg" id="stBlur">' +
+        ['off', 'soft', 'strong'].map(function (b) {
+          return '<button class="cc-btn' + ((st.background.blur || "off") === b ? " active" : "") + '" data-blur="' + b + '">' + BLUR_LABELS[b] + "</button>";
+        }).join("") +
+      "</div></div>" +
       '<button class="cc-btn cc-btn--accent cc-btn--block" id="stSave">Save to Display</button>' +
       '<div class="cc-empty" id="stSaved" style="display:none">Saved ✓</div>';
     panel.innerHTML = html;
 
-    el("stFont").value = st.font;
+    function repaint() {
+      renderPreviewInto(el("styleMiniInner"), styleSample().ct, styleSample().content, 0, st);
+      paintControls();
+    }
 
-    function repaint() { renderPreviewInto(el("styleMiniInner"), styleSample().ct, styleSample().content, 0, st); }
-    repaint();
+    function updateContrast() {
+      var warn = el("stTxtWarn");
+      if (!warn) return;
+      if (st.textColor && st.background.type !== "image" && st.background.value) {
+        var c = contrast(st.textColor, st.background.value);
+        if (c < 4.5) {
+          warn.textContent = "Low contrast — hard to read on this background (" + c.toFixed(2) + ":1).";
+          warn.style.display = "";
+          return;
+        }
+      }
+      warn.style.display = "none";
+    }
+
+    function paintControls() {
+      var pct = Math.round(((typeof st.size === "number" ? st.size : (SIZE_SCALE_NUM[st.size] || 1)) * 100));
+      el("stFont").value = st.font;
+      el("stSizePct").textContent = pct + "%";
+      el("stSizeSlider").value = pct;
+      el("stTxtCustom").value = st.textColor || "#FFFFFF";
+      el("stRefCustom").value = st.referenceColor || "#FFFFFF";
+      el("stTxt").querySelectorAll("[data-color]").forEach(function (b) {
+        b.classList.toggle("active", st.textColor === b.dataset.color);
+      });
+      el("stRef").querySelectorAll("[data-color]").forEach(function (b) {
+        b.classList.toggle("active", st.referenceColor === b.dataset.color);
+      });
+      var segs = [
+        [el("stLine"), ["tight", "normal", "loose"], st.lineSpacing || "normal", "data-line"],
+        [el("stAlign"), ["center", "left"], st.align || "center", "data-al"],
+        [el("stShadow"), ["auto", "off", "strong"], st.shadow || "auto", "data-sh"]
+      ];
+      segs.forEach(function (s) {
+        s[0].querySelectorAll("[" + s[3] + "]").forEach(function (b) {
+          b.classList.toggle("active", b.getAttribute(s[3]) === s[2]);
+        });
+      });
+      el("stBold").classList.toggle("active", !!st.bold);
+      el("stBoldOff").classList.toggle("active", !st.bold);
+      paintSwatches();
+      updateContrast();
+    }
 
     function paintSwatches() {
       el("stBgColors").querySelectorAll("[data-bg-color]").forEach(function (b) {
@@ -1133,16 +1457,58 @@
       el("stBgImages").querySelectorAll("[data-bg-url]").forEach(function (b) {
         b.classList.toggle("active", st.background.type === "image" && st.background.value === b.dataset.bgUrl);
       });
+      var blurWrap = el("stBlurWrap");
+      if (blurWrap) {
+        blurWrap.style.display = st.background.type === "image" ? "" : "none";
+        el("stBlur").querySelectorAll("[data-blur]").forEach(function (b) {
+          b.classList.toggle("active", (st.background.blur || "off") === b.dataset.blur);
+        });
+      }
     }
 
     el("stFont").onchange = function () { st.font = el("stFont").value; repaint(); };
-    el("stSize").querySelectorAll("[data-size]").forEach(function (b) {
-      b.onclick = function () {
-        st.size = b.dataset.size;
-        el("stSize").querySelectorAll("[data-size]").forEach(function (x) { x.classList.toggle("active", x === b); });
+    el("stSizeSlider").oninput = function () { st.size = (parseInt(el("stSizeSlider").value, 10)) / 100; repaint(); };
+    el("stBold").onclick = function () { st.bold = true; repaint(); };
+    el("stBoldOff").onclick = function () { st.bold = false; repaint(); };
+
+    function wireSeg(id, key, attr) {
+      el(id).querySelectorAll("[" + attr + "]").forEach(function (b) {
+        b.onclick = function () {
+          st[key] = b.getAttribute(attr);
+          repaint();
+        };
+      });
+    }
+    wireSeg("stLine", "lineSpacing", "data-line");
+    wireSeg("stAlign", "align", "data-al");
+    wireSeg("stShadow", "shadow", "data-sh");
+
+    function wireColors(id, key, customId) {
+      el(id).querySelectorAll("[data-color]").forEach(function (b) {
+        b.onclick = function () {
+          st[key] = b.dataset.color;
+          repaint();
+        };
+      });
+      el(customId).oninput = function () {
+        st[key] = el(customId).value.toLowerCase();
         repaint();
       };
-    });
+    }
+    wireColors("stTxt", "textColor", "stTxtCustom");
+    wireColors("stRef", "referenceColor", "stRefCustom");
+
+    el("stReset").onclick = function () {
+      st.font = "default";
+      st.size = 1;
+      st.textColor = null;
+      st.referenceColor = null;
+      st.bold = false;
+      st.lineSpacing = null;
+      st.align = null;
+      st.shadow = null;
+      repaint();
+    };
 
     loadThumbs();
 
@@ -1157,7 +1523,7 @@
       imgs.forEach(function (i) {
         imgHtml += '<span class="cc-bg-thumb-wrap">' +
           '<button class="cc-bg-thumb" data-bg-url="' + esc(i.url) + '" title="' + esc(i.title || "image") + '"' +
-          ' style="background-image:url(\'' + i.url + '\')"></button>' +
+          ' style="background-image:url(\'' + esc(i.thumb || i.url) + '\')"></button>' +
           '<button class="cc-bg-thumb-del" data-del-image="' + i.id + '" title="Delete image">×</button>' +
           "</span>";
       });
@@ -1165,7 +1531,14 @@
       paintSwatches();
       el("stBgImages").querySelectorAll("[data-bg-url]").forEach(function (b) {
         b.onclick = function () {
-          st.background = { type: "image", value: b.dataset.bgUrl };
+          st.background = { type: "image", value: b.dataset.bgUrl, blur: st.background.blur || "off" };
+          paintSwatches();
+          repaint();
+        };
+      });
+      el("stBlur").querySelectorAll("[data-blur]").forEach(function (b) {
+        b.onclick = function () {
+          st.background = { type: "image", value: st.background.value, blur: b.dataset.blur };
           paintSwatches();
           repaint();
         };
@@ -1206,27 +1579,66 @@
       cmd("set_style", { styles: st });
       el("stSaved").style.display = "";
     };
+
+    repaint();
+  }
+
+  // WCAG relative luminance + contrast ratio (for the non-blocking warning).
+  function channel(c) {
+    c /= 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  }
+  function contrast(fg, bg) {
+    if (!/^#[0-9a-f]{6}$/.test(fg) || !/^#[0-9a-f]{6}$/.test(bg)) return 99;
+    var a = [parseInt(fg.slice(1, 3), 16) / 255, parseInt(fg.slice(3, 5), 16) / 255, parseInt(fg.slice(5, 7), 16) / 255].map(channel);
+    var b = [parseInt(bg.slice(1, 3), 16) / 255, parseInt(bg.slice(3, 5), 16) / 255, parseInt(bg.slice(5, 7), 16) / 255].map(channel);
+    var l1 = 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2];
+    var l2 = 0.2126 * b[0] + 0.7152 * b[1] + 0.0722 * b[2];
+    if (l1 < l2) { var t = l1; l1 = l2; l2 = t; }
+    return (l1 + 0.05) / (l2 + 0.05);
   }
 
   // --- Preview before sending ---
-  function openPreview(ct, content, title) {
+  function openPreview(ct, content, title, opts) {
+    opts = opts || {};
+    var fitRow = "";
+    if (ct === "image") {
+      fitRow = '<div class="cc-field"><label>Fit</label><div class="cc-size-seg" id="pvFit">' +
+        FITS.map(function (f) {
+          return '<button class="cc-btn' + ((content.fit || "blur") === f ? " active" : "") + '" data-fit="' + f + '">' + FIT_LABELS[f] + "</button>";
+        }).join("") + "</div></div>";
+    }
     var body =
       '<div class="cc-field"><div class="cc-mini-preview cc-mini-preview--lg"><div class="cc-mini-preview__inner" id="pvInner"></div></div></div>' +
+      fitRow +
       '<button class="cc-btn cc-btn--ghost cc-btn--block" id="pvClose">Close</button>';
     openModal("Preview — " + (title || ct), body);
     renderPreviewInto(el("pvInner"), ct, content, 0, stateStyles());
+    if (ct === "image") {
+      el("pvFit").querySelectorAll("[data-fit]").forEach(function (b) {
+        b.onclick = function () {
+          content.fit = b.dataset.fit;
+          el("pvFit").querySelectorAll("[data-fit]").forEach(function (x) { x.classList.toggle("active", x === b); });
+          renderPreviewInto(el("pvInner"), "image", content, 0, stateStyles());
+          if (opts.id != null && opts.editable !== false) {
+            api("/api/images/" + opts.id, "POST", { fit: content.fit }).then(function () {
+              // Live image: re-present so the new fit reaches the wall now.
+              if (state && state.contentType === "image" && state.itemId === opts.id) {
+                cmd("present_image", { id: opts.id });
+              }
+            });
+          }
+        };
+      });
+    }
     el("pvClose").onclick = closeModal;
   }
 
   function songSlides(s) {
     var slides = [];
     (s.sections || []).forEach(function (sec) {
-      var paras = String(sec.lyrics || "").split(/\n\n+/).map(function (p) { return p.trim(); }).filter(Boolean);
-      (paras.length ? paras : [String(sec.lyrics || "").trim()]).forEach(function (p) {
-        var lines = p.split("\n");
-        for (var i = 0; i < lines.length; i += 6) {
-          slides.push({ label: sec.label, text: lines.slice(i, i + 6).join("\n") });
-        }
+      splitSongSlides(sec.lyrics).forEach(function (chunk) {
+        slides.push({ label: sec.label, text: chunk });
       });
     });
     return slides;
@@ -1256,7 +1668,17 @@
   function previewImage(id) {
     api("/api/images/" + id).then(function (res) {
       var i = res.image || {};
-      openPreview("image", { url: i.url, title: i.title }, i.title || "Image");
+      openPreview(
+        "image",
+        {
+          url: i.url,
+          title: i.title,
+          fit: i.fit || "blur",
+          backdrop: i.strong || imageVariantUrl(i.url, "strong")
+        },
+        i.title || "Image",
+        { id: id }
+      );
     });
   }
 
@@ -1429,94 +1851,194 @@
   }
 
   function openSongEditor(songId) {
-    var body = '<div class="cc-field"><label>Title</label><input class="cc-input" id="sTitle"></div>' +
-      '<div class="cc-field"><label>Author</label><input class="cc-input" id="sAuthor"></div>' +
-      '<div class="cc-field"><label>Import (plain text or ChordPro)</label><textarea class="cc-input" id="sImport" placeholder="Paste lyrics here… [Verse 1]&#10;Amazing grace, how sweet the sound&#10;&#10;[Chorus]&#10;…" style="min-height:120px"></textarea></div>' +
+    var body = '<div class="cc-field"><label>Import lyrics (plain text or ChordPro)</label>' +
+      '<textarea class="cc-input" id="sImport" placeholder="Paste lyrics here… Number markers work (1., 2.) or [Verse 1] / [Chorus]. A numbered sequence restarting at 1 starts a new song." style="min-height:110px"></textarea></div>' +
       '<button class="cc-btn cc-btn--block" id="sParse" style="margin-bottom:12px">Parse Import</button>' +
+      '<div id="sWarnings" style="margin-bottom:10px"></div>' +
       '<div id="sSections"></div>' +
-      '<button class="cc-btn cc-btn--accent cc-btn--block" id="sSave" style="margin-top:12px">Save Song</button>' +
+      '<button class="cc-btn cc-btn--accent cc-btn--block" id="sSave" style="margin-top:12px">Save Song(s)</button>' +
       '<button class="cc-btn cc-btn--danger cc-btn--block" id="sDelete" style="margin-top:8px;display:none">Delete Song</button>';
     openModal(songId ? "Edit Song" : "New Song", body);
 
-    var sections = [];
+    var models = [];
+    var rawText = "";
 
-    function renderSections() {
+    var LANG_OPTS = [["", "— none —"], ["English", "English"], ["Yoruba", "Yoruba"]];
+    function langOptions(cur) {
       var html = "";
-      sections.forEach(function (s, i) {
-        html += '<div class="cc-section-edit">' +
-          '<div class="cc-section-edit__row">' +
-          '<button class="cc-section-edit__move" data-sec-up="' + i + '" title="Move up">▲</button>' +
-          '<button class="cc-section-edit__move" data-sec-down="' + i + '" title="Move down">▼</button>' +
-          '<input class="cc-input" id="secLabel' + i + '" value="' + esc(s.label) + '" placeholder="Label">' +
-          '<button class="cc-item__btn cc-item__btn--danger" data-sec-del="' + i + '">✕</button></div>' +
-          '<textarea class="cc-input" id="secLyrics' + i + '" placeholder="Lyrics" style="min-height:60px">' + esc(s.lyrics) + '</textarea>' +
-          '</div>';
+      LANG_OPTS.forEach(function (o) {
+        html += '<option value="' + o[0] + '"' + (o[0] === (cur || "") ? " selected" : "") + '">' + o[1] + "</option>";
       });
-      html += '<button class="cc-btn cc-btn--ghost" id="sAddSec" style="margin-top:8px">+ Add Section</button>';
-      el("sSections").innerHTML = html;
-      el("sAddSec").onclick = function () { sections.push({ label: "Verse " + (sections.length + 1), lyrics: "" }); renderSections(); };
+      return html;
+    }
+
+    function warningsHtml(warnings) {
+      if (!warnings || !warnings.length) return "";
+      return '<div style="background:#fff3cd;color:#7a5b00;border:1px solid #f0d27a;padding:6px 10px;border-radius:6px;font-size:13px;margin-bottom:10px">' +
+        warnings.map(function (w) { return "<div>" + esc(w) + "</div>"; }).join("") + "</div>";
+    }
+
+    function sectionHtml(mi, sec, i) {
+      return '<div class="cc-section-edit">' +
+        '<div class="cc-section-edit__row">' +
+        '<button class="cc-section-edit__move" data-sec-up="' + mi + ':' + i + '" title="Move up">▲</button>' +
+        '<button class="cc-section-edit__move" data-sec-down="' + mi + ':' + i + '" title="Move down">▼</button>' +
+        '<input class="cc-input" data-sec-label="' + mi + ':' + i + '" value="' + esc(sec.label) + '" placeholder="Label">' +
+        '<button class="cc-item__btn cc-item__btn--danger" data-sec-del="' + mi + ':' + i + '">✕</button></div>' +
+        '<textarea class="cc-input" data-sec-lyrics="' + mi + ':' + i + '" placeholder="Lyrics" style="min-height:60px">' + esc(sec.lyrics) + '</textarea>' +
+        '</div>';
+    }
+
+    function songCardHtml(mi) {
+      var m = models[mi];
+      var header = mi + 1;
+      return '<div style="border:1px solid #ddd;border-radius:8px;padding:12px;margin-bottom:14px">' +
+        '<div class="cc-field"><label>Song ' + header + ' title' +
+        (m.title_found === false ? ' <span style="color:#a33;font-weight:bold">(no title detected — type one here)</span>' : "") +
+        '</label><input class="cc-input" data-song-title="' + mi + '" value="' + esc(m.title) + '" placeholder="Song title"></div>' +
+        '<div class="cc-field"><label>Language</label><select class="cc-input" data-song-lang="' + mi + '">' + langOptions(m.language) + "</select></div>" +
+        warningsHtml(m.warnings) +
+        '<div data-song-sections="' + mi + '">' + m.sections.map(function (sec, i) { return sectionHtml(mi, sec, i); }).join("") +
+        '<button class="cc-btn cc-btn--ghost" data-sec-add="' + mi + '" style="margin-top:8px">+ Add Section</button></div>' +
+        "</div>";
+    }
+
+    function bind() {
+      el("sSections").querySelectorAll("[data-song-title]").forEach(function (b) {
+        b.oninput = function () { models[parseInt(b.dataset.songTitle)].title = b.value; setWarnings(); };
+      });
+      el("sSections").querySelectorAll("[data-song-lang]").forEach(function (b) {
+        b.onchange = function () { models[parseInt(b.dataset.songLang)].language = b.value; };
+      });
+      el("sSections").querySelectorAll("[data-sec-label]").forEach(function (b) {
+        var idx = b.dataset.secLabel.split(":");
+        b.oninput = function () { models[parseInt(idx[0])].sections[parseInt(idx[1])].label = b.value; };
+      });
+      el("sSections").querySelectorAll("[data-sec-lyrics]").forEach(function (b) {
+        var idx = b.dataset.secLyrics.split(":");
+        b.oninput = function () { models[parseInt(idx[0])].sections[parseInt(idx[1])].lyrics = b.value; };
+      });
       el("sSections").querySelectorAll("[data-sec-del]").forEach(function (b) {
-        b.onclick = function () { sections.splice(parseInt(b.dataset.secDel), 1); renderSections(); };
+        b.onclick = function () {
+          var idx = b.dataset.secDel.split(":");
+          models[parseInt(idx[0])].sections.splice(parseInt(idx[1]), 1);
+          render();
+        };
       });
       el("sSections").querySelectorAll("[data-sec-up]").forEach(function (b) {
-        b.onclick = function () { moveSection(parseInt(b.dataset.secUp), -1); };
+        b.onclick = function () { moveSection(b.dataset.secUp, -1); };
       });
       el("sSections").querySelectorAll("[data-sec-down]").forEach(function (b) {
-        b.onclick = function () { moveSection(parseInt(b.dataset.secDown), 1); };
+        b.onclick = function () { moveSection(b.dataset.secDown, 1); };
       });
-      function moveSection(i, dir) {
-        var j = i + dir;
-        if (j < 0 || j >= sections.length) return;
-        var tmp = sections[i]; sections[i] = sections[j]; sections[j] = tmp;
-        renderSections();
+      el("sSections").querySelectorAll("[data-sec-add]").forEach(function (b) {
+        b.onclick = function () {
+          var mi = parseInt(b.dataset.secAdd);
+          models[mi].sections.push({ label: "Verse " + (models[mi].sections.length + 1), lyrics: "" });
+          render();
+        };
+      });
+    }
+
+    function moveSection(key, dir) {
+      var idx = key.split(":");
+      var mi = parseInt(idx[0]);
+      var i = parseInt(idx[1]);
+      var j = i + dir;
+      if (j < 0 || j >= models[mi].sections.length) return;
+      var tmp = models[mi].sections[i];
+      models[mi].sections[i] = models[mi].sections[j];
+      models[mi].sections[j] = tmp;
+      render();
+    }
+
+    function globalWarnings() {
+      if (!models.length) return [];
+      if (models.length === 1 && !String(models[0].title).trim()) {
+        return ["No title — type one in the song title box before saving."];
       }
+      return [];
+    }
+
+    function setWarnings() {
+      el("sWarnings").innerHTML = warningsHtml(globalWarnings());
+    }
+
+    function render() {
+      var html = "";
+      for (var mi = 0; mi < models.length; mi++) html += songCardHtml(mi);
+      el("sSections").innerHTML = html;
+      bind();
+      setWarnings();
+    }
+
+    function loadSong(s) {
+      models = [{
+        id: s.id, title: s.title || "", author: s.author || "",
+        language: s.language || "", raw_text: s.raw_text || "",
+        title_found: true, warnings: [],
+        sections: (s.sections || []).map(function (sec) { return { label: sec.label, lyrics: sec.lyrics }; }),
+      }];
+      rawText = s.raw_text || "";
+      el("sImport").value = rawText;
+      render();
     }
 
     if (songId) {
-      api("/api/songs/" + songId).then(function (res) {
-        var s = res.song;
-        el("sTitle").value = s.title || "";
-        el("sAuthor").value = s.author || "";
-        sections = (s.sections || []).map(function (sec) { return { label: sec.label, lyrics: sec.lyrics }; });
-        renderSections();
-        el("sDelete").style.display = "block";
-        el("sDelete").onclick = function () {
-          if (confirm("Delete this song?")) {
-            api("/api/songs/" + songId + "/delete", "DELETE").then(function () { closeModal(); switchTab("songs"); });
-          }
-        };
-      });
+      api("/api/songs/" + songId).then(function (res) { loadSong(res.song); });
+      el("sDelete").style.display = "block";
+      el("sDelete").onclick = function () {
+        if (confirm("Delete this song?")) {
+          api("/api/songs/" + songId + "/delete", "DELETE").then(function () { closeModal(); switchTab("songs"); });
+        }
+      };
     } else {
-      sections = [{ label: "Verse 1", lyrics: "" }];
-      renderSections();
+      models = [{ id: null, title: "", author: "", language: "", raw_text: "", title_found: true, warnings: [], sections: [{ label: "Verse 1", lyrics: "" }] }];
+      render();
     }
 
     el("sParse").onclick = function () {
       var text = el("sImport").value;
       if (!text.trim()) return;
       api("/api/songs/import", "POST", { text: text, format: "auto" }).then(function (res) {
-        sections = res.sections || [];
-        renderSections();
+        rawText = text;
+        var songs = res.songs && res.songs.length ? res.songs
+          : (res.sections ? [{ sections: res.sections }] : []);
+        models = songs.map(function (s) {
+          return {
+            id: null,
+            title: s.title || "", author: "", language: s.language || "",
+            raw_text: text,
+            title_found: !!s.title_found,
+            warnings: s.warnings || [],
+            sections: (s.sections || []).map(function (sec) { return { label: sec.label, lyrics: sec.lyrics }; }),
+          };
+        });
+        if (!models.length) {
+          models = [{ id: null, title: "", author: "", language: "", raw_text: text, title_found: true, warnings: [], sections: [{ label: "Verse 1", lyrics: text }] }];
+        }
+        render();
       });
     };
 
     el("sSave").onclick = function () {
-      var collected = [];
-      for (var i = 0; i < sections.length; i++) {
-        var lEl = el("secLabel" + i);
-        var tEl = el("secLyrics" + i);
-        if (lEl && tEl) {
-          collected.push({ label: lEl.value || "Verse", lyrics: tEl.value });
-        }
+      var pending = [];
+      for (var mi = 0; mi < models.length; mi++) {
+        var m = models[mi];
+        pending.push(
+          api("/api/songs/save", "POST", {
+            id: m.id,
+            title: String(m.title).trim() || "Untitled",
+            author: m.author || "",
+            language: m.language || "",
+            raw_text: rawText,
+            sections: m.sections.map(function (sec) {
+              return { label: sec.label || "Verse", lyrics: sec.lyrics };
+            }),
+          })
+        );
       }
-      if (collected.length === 0) collected = sections;
-      api("/api/songs/save", "POST", {
-        id: songId,
-        title: el("sTitle").value || "Untitled",
-        author: el("sAuthor").value,
-        raw_text: el("sImport").value,
-        sections: collected,
-      }).then(function () { closeModal(); switchTab("songs"); });
+      Promise.all(pending).then(function () { closeModal(); switchTab("songs"); });
     };
   }
 
@@ -1571,17 +2093,9 @@
     cmd("blank", { blank: willBlank });
   };
 
-  // Queue navigation (service order)
-  qPrevBtn.onclick = function () {
-    var qidx = queueIndex();
-    if (qidx <= 0) return;
-    cmd("goto_queue", { index: qidx - 1 });
-  };
-  qNextBtn.onclick = function () {
-    var qidx = queueIndex();
-    if (qidx < 0 || qidx >= queue.length - 1) return;
-    cmd("goto_queue", { index: qidx + 1 });
-  };
+  // Queue navigation (service order) — server is authoritative at the edges.
+  qPrevBtn.onclick = function () { cmd("prev_item"); };
+  qNextBtn.onclick = function () { cmd("next_item"); };
   cdBtn.onclick = openCountdownModal;
 
   // Slide strip clicks (section/slide jump)

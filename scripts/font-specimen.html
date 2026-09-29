@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proclaim — bundled font specimen</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0e1116; color: #e6e9ee; margin: 0; padding: 32px; }
+  h1 { font-size: 20px; }
+  .note { color: #93a0b0; font-size: 13px; max-width: 720px; line-height: 1.6; }
+  .fam { background: #171b22; border: 1px solid #2a3140; border-radius: 12px; margin: 20px 0; padding: 18px 22px; }
+  .fam h2 { font-size: 16px; margin: 0 0 4px; }
+  .row { margin: 14px 0; }
+  .w { display: block; font-size: 12px; color: #93a0b0; margin: 8px 0 4px; }
+  .smp { font-size: 22px; line-height: 1.7; margin: 0; }
+  .bad { color: #ff7a7a; }
+</style>
+</head>
+<body>
+<h1>Bundled display fonts — glyph specimen</h1>
+<p class="note">
+  Developer check page, not part of the product. Every family below is bundled in
+  <code>presentation/static/presentation/fonts/</code> (latin + latin-ext + vietnamese, 400/700)
+  and declared in <code>css/fonts.css</code>. Look for tofu boxes (□/�) and verify the
+  combining accents in <em>Ẹ̀ṣọ́ ọ̀rọ̀ Ọlọ́run</em> sit over the right base letters.
+</p>
+<div id="out"></div>
+<script>
+  var FAMILIES = [
+    { name: "Noto Sans",      files: "noto-sans" },
+    { name: "Noto Serif",     files: "noto-serif" },
+    { name: "Montserrat",     files: "montserrat" },
+    { name: "Merriweather",   files: "merriweather" }
+  ];
+  var SUBSETS = { latin: "U+0000-00FF", "latin-ext": "U+0100-02BA", vietnamese: "U+1EA0-1EF9" };
+  var BASE = "../presentation/static/presentation/fonts/";
+  var ROWS = [
+    ["English", "For God so loved the world, that he gave his only begotten Son…"],
+    ["Yoruba",  "Ẹ̀ṣọ́ ọ̀rọ̀ Ọlọ́run"],
+    ["Igbo",    "ị Ị ọ Ọ ụ Ụ ṅ Ṅ"],
+    ["Hausa",   "ɓ Ɓ ɗ Ɗ ƙ Ƙ ƴ Ƴ"]
+  ];
+
+  var style = document.createElement("style");
+  FAMILIES.forEach(function (fam) {
+    [400, 700].forEach(function (w) {
+      Object.keys(SUBSETS).forEach(function (s) {
+        style.textContent +=
+          "@font-face{font-family:'" + fam.name + "';font-style:normal;font-weight:" + w +
+          ";src:url('" + BASE + fam.files + "-" + s + "-" + w + ".woff2') format('woff2');" +
+          "unicode-range:" + SUBSETS[s] + ";}\n";
+      });
+    });
+  });
+  document.head.appendChild(style);
+
+  var out = document.getElementById("out");
+  var html = "";
+  FAMILIES.forEach(function (fam) {
+    html += '<div class="fam"><h2 style="font-family:\'' + fam.name + '\'">' + fam.name + '</h2>';
+    [400, 700].forEach(function (w) {
+      html += '<div class="w">weight ' + w + ' <span class="bad" data-miss="' + fam.name + "|" + w + '"></span></div>';
+      ROWS.forEach(function (r) {
+        html += '<p class="smp" style="font-family:\'' + fam.name + '\';font-weight:' + w + '">' +
+                '<strong>' + r[0] + ':</strong> ' + r[1] + '</p>';
+      });
+    });
+    html += "</div>";
+  });
+  out.innerHTML = html;
+
+  // Best-effort: report any character the family cannot render (fallback font will show it).
+  function missChars(txt, famName) {
+    var m = [], i, ch;
+    var canvas = document.createElement("canvas");
+    var ctx = canvas.getContext("2d");
+    for (i = 0; i < txt.length; i++) {
+      ch = txt[i];
+      if (ch === " ") continue;
+      ctx.font = "20px monospace";
+      var wMono = ctx.measureText(ch).width;
+      ctx.font = "20px '" + famName + "'";
+      var wCustom = ctx.measureText(ch).width;
+      if (wCustom === wMono) m.push("U+" + ch.codePointAt(0).toString(16).toUpperCase() + " " + ch);
+    }
+    return m;
+  }
+  FAMILIES.forEach(function (fam) {
+    [400, 700].forEach(function (w) {
+      var all = ROWS.map(function (r) { return r[1]; }).join(" ");
+      var miss = missChars(all, fam.name);
+      var el = document.querySelector('[data-miss="' + fam.name + "|" + w + '"]');
+      el.textContent = miss.length ? "missing: " + miss.join(", ") : "all specimen glyphs present";
+      el.className = miss.length ? "bad" : "";
+    });
+  });
+</script>
+</body>
+</html>

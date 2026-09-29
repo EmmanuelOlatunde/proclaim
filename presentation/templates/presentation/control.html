@@ -1,4 +1,4 @@
-{% load static %}
+{% load versioned_static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,7 +6,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#0B0F14">
 <title>ChurchCast Control — {{ room_code }}</title>
-<link rel="stylesheet" href="{% static 'presentation/css/app.css' %}">
+<link rel="stylesheet" href="{% staticver 'presentation/css/fonts.css' %}">
+<link rel="stylesheet" href="{% staticver 'presentation/css/app.css' %}">
 </head>
 <body>
 <div class="cc-ctrl" id="app">
@@ -60,10 +61,19 @@
       <button class="cc-nav__blank" id="blankBtn">BLANK</button>
       <button class="cc-nav__next" id="nextBtn"><span>Next</span> ▶</button>
     </div>
+    <div class="cc-navhint" id="navHint" hidden>Last slide</div>
     <div class="cc-qnav">
-      <button class="cc-qnav__btn" id="qPrev" title="Previous service item">◀</button>
+      <button class="cc-qnav__btn cc-qnav__btn--item" id="qPrev" title="Previous service item">
+        <span class="cc-qnav__arrow">◀</span>
+        <span class="cc-qnav__label"><span class="lbl-long">Prev item</span><span class="lbl-short">Item</span></span>
+        <span class="cc-qnav__target" id="qPrevTitle"></span>
+      </button>
       <span class="cc-qnav__pos" id="qPos">Service —</span>
-      <button class="cc-qnav__btn" id="qNext" title="Next service item">▶</button>
+      <button class="cc-qnav__btn cc-qnav__btn--item" id="qNext" title="Next service item">
+        <span class="cc-qnav__target" id="qNextTitle"></span>
+        <span class="cc-qnav__label"><span class="lbl-long">Next item</span><span class="lbl-short">Item</span></span>
+        <span class="cc-qnav__arrow">▶</span>
+      </button>
       <button class="cc-qnav__btn cc-qnav__btn--cd" id="cdBtn" title="Countdown timer">⏱ 10:00</button>
     </div>
   </div>
@@ -80,7 +90,8 @@
 window.ROOM_CODE = "{{ room_code }}";
 window.HOST = "{{ host }}";
 </script>
-<script src="{% static 'presentation/js/scripture-picker.js' %}"></script>
-<script src="{% static 'presentation/js/control.js' %}"></script>
+<script src="{% staticver 'presentation/js/scripture-picker.js' %}"></script>
+<script src="{% staticver 'presentation/js/song-slides.js' %}"></script>
+<script src="{% staticver 'presentation/js/control.js' %}"></script>
 </body>
 </html>

@@ -1,43 +1,147 @@
-# Proclaim Session Summary
+# Proclaim — carry-forward summary · September 2026 (updated)
 
-## 1. GOAL
-Convert the Django + Channels + Daphne church presentation app **Proclaim** (code still namespaced `churchcast`) at `/home/mohbohlahji/Projects/proclaim` into a self-contained **portable Windows 10/11 x64 app** — single `Proclaim.exe`, no host Python/pip/Django, LAN-only — built with PyInstaller `--onedir`. Current phase: the first Windows build crashed at startup (`autobahn` nvx `.c` missing); all three startup bugs are now fixed and validated on a frozen Linux build, pending a Windows rebuild + `verify_package.bat` pass.
+## Where things stand
 
-## 2. STATE (verified on disk)
-- Canonical project: `/home/mohbohlahji/Projects/proclaim`; zip-ready **Windows build source**: `/home/mohbohlahji/Projects/pro` (excludes `.venv`, `__pycache__`, `*.pyc`, `scripture.txt`, `summary.txt`, `.gitkeep`; ~45 MB, 54 files; `db.sqlite3` = 978 songs / 4 rooms / 1 imageitem).
-- Versions (dev venv `.venv`, Python 3.14.4): Django 6.1.1, channels 4.3.2, daphne 4.2.3, Twisted 26.4.0, autobahn 26.7.1, Pillow 12.3.0, cffi 2.1.1. PyInstaller 6.22.3 in scratch venv `/tmp/opencode/pyikev` (Python 3.14).
-- **`portable.py`** (246 lines, PyInstaller entry): `app_root()` (frozen → `Path(sys.executable).parent`; dev → `PROCLAIM_PORTABLE_ROOT` env else script dir), `bundle_dir()` (uses `sys._MEIPASS`), `detect_lan_ip()` (UDP `8.8.8.8:80` getsockname probe + `getaddrinfo` fallback, returns `127.0.0.1` as last resort), `seed_runtime(root)` (creates `data/`, `data/hymns/`, `media/`; first-launch copy of bundled seed DB — accepts `seed/proclaim.sqlite3` **or** `seed/db.sqlite3` — plus `seed/media/*` files; never overwrites existing), `resolve_port()` (`--port N` > `PROCLAIM_PORT` > 3000 default), `assert_port_free()`, `print_banner()` (Local/LAN/Control/Display URLs), `main()` (catches exceptions → `PROCLAIM STARTUP ERROR` box + `input()` to keep window open). `run()` sets `os.environ["AUTOBAHN_USE_NVX"]="0"`, `call_command("migrate")`, then `daphne.cli.CommandLineInterface().run(["-b","0.0.0.0","-p",str(port),"--no-server-name","churchcast.asgi:application"])`.
-- **`Proclaim.spec`**: `Analysis(["portable.py"])`; `datas`: `presentation/templates`+`static`+`data` → same rel paths (so `__file__`-relative lookups work in `_internal/`), `db.sqlite3` → `seed`, `media` → `seed/media`; `hiddenimports` incl. **`churchcast.asgi`**, `daphne.*`, `twisted.internet.endpoints`+`asyncioreactor`, `twisted.web.http`+`http_headers`, `twisted.protocols.policies`, `twisted.logger`, `zope.interface`, `autobahn.twisted.websocket`, `django.core.management.commands.migrate`+`check`; `excludes`: `tkinter`, `channels.testing`, `daphne.testing`, `presentation.tests`, `numpy`, `matplotlib`, **`autobahn.nvx`, `_nvx_utf8validator`, `_nvx_xormasker`**; `EXE(... console=True, exclude_binaries=True, name="Proclaim")` + `COLLECT(name="Proclaim")` (onedir).
-- **`build_windows.bat`**: build_venv → pip installs `Django channels daphne Pillow pyinstaller` → cleans → `pyinstaller --noconfirm --clean --distpath dist --workpath build Proclaim.spec` → `mkdir dist\Proclaim\data\hymns`+`media` → copies `README-PORTABLE.txt`+`verify_package.bat` → checks `Proclaim.exe`. **`verify_package.bat`**: copies tree to `%TEMP%\ProclaimVerify`, starts `Proclaim.exe --port 3999`, PowerShell-polls `/`, checks `/`, `/control`, `/display/CHURCH1`, `/static/presentation/css/app.css`, `/api/scripture/index`, `/api/songs`, `taskkill Proclaim.exe`, prints `SELF-TEST PASSED` (warns it kills any running Proclaim.exe). **`README-PORTABLE.txt`**: non-dev instructions (keep folder together, `data/proclaim.sqlite3`, optional firewall `netsh` TCP 3000, startup error box).
-- **`churchcast/settings.py`** lines 9–23: `PORTABLE_ROOT = os.environ.get("PROCLAIM_PORTABLE_ROOT")` → portable branch `DB_NAME = RUNTIME_DIR/"data"/"proclaim.sqlite3"`, `MEDIA_ROOT = RUNTIME_DIR/"media"`; dev unchanged `db.sqlite3`/`media`. `DEBUG=True`, `ALLOWED_HOSTS=["*"]`, in-memory channel layer. **`churchcast/urls.py`**: DEBUG-only `staticfiles_urlpatterns()` appended (direct Daphne doesn't wire static like `runserver`). **`start.sh`** banner renamed to "Proclaim".
-- **Prior feature work (carry-forward, done + tested)**: minimal WS protocol in `presentation/consumer.py` (`RoomConsumer`, `handle_command`, `set_style`/`style_change`, full-state only on content change/connect); scripture parser `presentation/scripture.py` (`parse_reference`, `build_slides`, `presentation/data/kjv.json` 66 books/31,102 verses, `_sorted_chapter_keys` descending fix); YBH/NNBH two-hymnal idempotent import (`import_hymnals` command → 978 songs); enhanced song search; safe image delete (409 in-use / 404 missing); display.js/control.js Style tab + client-side prev-preview (`openPreview`/`renderPreviewInto`, `.cc-mini-preview` CSS). **56 test methods** in `presentation/tests.py`, `manage.py check` clean, prior runs 56/56 green. Dev live server PID 1025095 (`0.0.0.0:3000`) is running OLD code — restart before hardware test. LAN IP of laptop was `10.78.131.239` (phone is Wi-Fi hotspot host).
-- **Linux frozen-build validation** (PyInstaller 6.22.3, artifact `/tmp/opencode/linuxbuild/dist/Proclaim/Proclaim`; iteration logs `build1.log` repro → `build2.log` nvx-fix → `build3.log` asgi-fix → `build4.log` seed-fix, all build exit 0): clean boot, migration, daphne `Listening on TCP address 0.0.0.0:<port>`; fresh seed = **978 songs / 4 rooms / 1 image**; `media/images` seeded; HTTP **200** on `/`, `/control`, `/display/CHURCH1`, `/static/presentation/css/app.css`, `/api/scripture/index`, `/api/scripture/translations`, `/api/songs`; WebSocket `/ws/room/CHURCH1/` → **101 Switching Protocols**; only 16 expected harmless hidden-import warnings.
+- **Queue nav (done, reviewed):** strict in-range `_step`, item nav commands
+  (`next_item`/`prev_item`) + chapter commands (`next_chapter`/`prev_chapter`)
+  behind vstrip edges, labeled "◀ Item / Item ▶" *not* Prev/Next, `#navHint`
+  fallback, dimmed disabled state. Ad-hoc content never moves `state.queueIndex`.
+- **Image handling (implemented, pending final user review):**
+  - `image_pipeline.py` — Pillow validation/transpose/downscale/variants/dedup,
+    HEIC+AVIF ftyp sniffing, animated rejection.
+  - `views.py` upload (duplicate skip, 15 MB cap), detail GET/POST(fit)/DELETE,
+    listing with lazy `ensure_variants`.
+  - `image_blockers(img)` — DELETE 409 unless the image is unused: blocked when
+    it is any room's background (any blur), presented in any room
+    (contentType "image" + itemId) or referenced by any QueueItem
+    (item_type "image" stores the image's DB id in `ref_id`; ref_data carries
+    only display hints like {"title": …}). Error names every room and tells the
+    operator to remove it from the service/queue first; the queue item is
+    never silently deleted.
+  - `consumer.py` present_state fit+backdrop; style blur whitelist off/soft/strong.
+  - `display.js/.css` full-bleed fit stage (blur/contain/cover), no runtime blur.
+  - `control.js/app.css` one-at-a-time multi-upload rows + "n of N", thumb
+    pickers, fit switcher (row + preview modal), Style blur selector,
+    mirrored `.d-image` classes for the mini preview.
+  - `backfill_images` command; migration `0003`.
+  - Tests: **118 pass** (84 original + 34 new), `node --check` clean, and a
+     dev-only no-undef lint (`bash scripts/lint-js.sh`).
 
-## 3. IN PROGRESS
-- **Windows final validation**: user ran `build_windows.bat` then `verify_package.bat` on a Windows machine and got the crash — `FileNotFoundError: [Errno 2] No such file or directory: '...\_internal\autobahn\nvx\_utf8validator.c'` → `PROCLAIM STARTUP ERROR`, during `django.setup()` (apps.populate → daphne.apps → daphne.server → ws_protocol → autobahn → utf8validator → nvx). All three root causes are fixed in `pro/` and CANNED on Linux but **must be re-verified on Windows**; I run on Linux so I cannot execute the `.bat` scripts myself.
-- Scratch/harness: `/tmp/opencode/linuxbuild` (source mirror of `pro/` + `dist/`/`build/`), `/tmp/opencode/start_proclaim.sh` (detached-server launcher on port 3998), `/tmp/opencode/server3998.log`, `/tmp/opencode/pyikev` (PyInstaller 6.22.3 venv). Reminder: `pkill -f "[P]roclaim --port"` (bracket trick) — a bare `pkill -f "dist/Proclaim/Proclaim"` matches its own command line and kills the shell.
-- Prior-session hardware verification (Style tab + Prev previews on a real phone/laptop pair) still unverified.
+## Follow-up done (this pass)
 
-## 4. DECISIONS
-- **Portable runtime model** (user-approved): read-only seed inside `_internal/` (templates/static/scripture JSONs at exact on-tree positions so `Path(__file__).parent/"data"` still resolves; `seed/db.sqlite3` + `seed/media` snapshots taken at build time) + writable runtime next to the exe (`data/proclaim.sqlite3`, `data/hymns/`, `media/`). Seed copied **only on first launch, never overwrites**. Rebuilding the app re-snapshots the current `db.sqlite3`, so new songs are picked up automatically.
-- `DEBUG=True` + `ALLOWED_HOSTS=["*"]` in the packaged app (LAN trust boundary; `static()`/`staticfiles_urlpatterns()` media/static serving depends on DEBUG).
-- Daphne started programmatically via `daphne.cli.CommandLineInterface().run([...])` — NOT `twistd` (avoids Twisted plugin discovery); `run` is an instance method (real bug found & fixed).
-- **autobahn nvx disabled** (spec excludes + `AUTOBAHN_USE_NVX=0` env in portable.py): its CFFI modules compile `autobahn/nvx/*.c` at import time, PyInstaller ships no `.c` and there is **no autobahn hook** (verified absent in PyInstaller core and hooks-contrib), so it must be excluded to force the bundled pure-Python UTF-8 validator.
-- `"churchcast.asgi"` added to `hiddenimports`: PyInstaller's bundled `hook-django.py` only auto-adds `<pkg>.wsgi`, and the ASGI app is passed to Daphne BY NAME as a string (`"churchcast.asgi:application"`), invisible to static analysis — without it, launch dies with `ModuleNotFoundError: No module named 'churchcast.asgi'`.
-- Seed filename: spec bundles `db.sqlite3 → seed/` (keeps source name) while runtime wants `data/proclaim.sqlite3`; `seed_runtime` accepts either `seed/proclaim.sqlite3` or `seed/db.sqlite3` — prevents silent empty-DB fresh installs (0 songs / 1 room, observed).
-- The 16 "Hidden import not found" warnings are **expected/harmless**: generated by upstream `hook-django.py` probing `<app>.templatetags` / `<app>.context_processors` for every `INSTALLED_APPS` entry (verified daphne/channels/staticfiles/presentation have none), plus `pycparser.lextab/yacctab` (optional generated tables), `django.db.backends.oracle.compiler` (file doesn't exist; Oracle backend unused), and `channels.testing.*` (deliberately excluded). Build still exits 0.
-- `console=True` (visible terminal required for banner/error box), `upx=False`, onedir (`exclude_binaries=True`), excludes `tkinter`/`numpy`/`matplotlib`. Branding renamed ChurchCast → **Proclaim** (exe/folder/banner); the `churchcast` module namespace kept (avoid risky renames mid-packaging).
+1. **Delete safety:** implemented the three-part 409 guard (background any
+   blur / presented in room / queued via ref_id) with room codes named and an
+   explicit "Remove it from the service/queue before deleting." message.
+   QueueItem references images by `ref_id` (PositiveIntegerField, not an FK)
+   with item_type "image"; ref_data is display metadata only — nothing
+   cascades, so hanging refs would 404 at present time. Tests: blocked while
+   presented; blocked while queued in another room; allowed after the queue
+   item is removed; combined presented+queued report.
+2. **Backfill (dev DB):** applied `0003` migration to the dev SQLite DB.
+   Found 1 legacy image ("Sunday Service Title", images/test_image.jpg).
+   `backfill_images` run 1: **1 generated, 0 skipped, 0 failed (~2.9 s)**;
+   run 2: **0 generated, 1 skipped** (no-op). Variants now exist on disk
+   (thumb 320×240, soft, strong); main file untouched.
+3. **Duplicate of a re-fit image:** confirmed via test — re-uploading the
+   bytes of an image set to fit "cover" returns duplicate=True pointing at
+   the SAME image id with fit still "cover"; DB still has 1 row, fit kept.
+4. **Phone-test bugfix — version 4 (root cause found, definitive):** the same
+   mislabel recurred, and then a NEW symptom appeared ("list didn't refresh
+   until I left and came back"). Root cause is scope, not the guards: the
+   upload batch (`handleImageBatch`) lives at the IIFE top level, but the list
+   refresh `doSearch` was a function NESTED inside `renderImages` — so the
+   batch's `doSearch()` tail call was a ReferenceError on EVERY batch
+   completion. In the original code that throw hopped into the upload's
+   `.catch` → mislabeled a successful upload "failed — request error" AND
+   bumped the counter twice ("2 of 1"). The v3 try/catch swallowed the
+   ReferenceError (correct "done"/"1 of 1") but silently killed the in-place
+   list refresh — hence "no update until I revisited" the tab. Fix: a top-level
+   `currentImagesRefresh` slot that `renderImages` assigns its live `doSearch`
+   into, and the batch tail calls that instead. `node --check` clean; suite
+   still 115 green. `control.js` include bumped to `?v=4`.
 
-## 5. BLOCKERS
-- I am on Linux: `build_windows.bat` / `verify_package.bat` are Windows-only — the user runs them and reports output back.
-- Windows build machine must use Python 3.12/3.13 (PyInstaller compatibility; the 3.14.4 dev venv may not be supported on Windows); Twisted Windows extras install automatically via pip.
-- Prior-session items still open: phone→laptop must reach `http://10.78.131.239:3000/control` (phone is the hotspot host; earlier attempts used stale `192.168.137.188`); Style-tab + Prev-preview test on real hardware pending; dev live server on 0.0.0.0:3000 runs pre-migration code and needs a restart via `start.sh` first.
-- Not a bug: `data/hymns/` is empty at runtime by design — hymns live in the DB (`presentation_song`, 978 rows) and `/api/songs` reads the DB, not files.
+## Follow-up: static-quality gate, cache-bust, upgrade safety
 
-## 6. NEXT STEPS
-1. Ensure the two fixed files are identical in `pro/` and `proclaim/` (already done — `md5` `Proclaim.spec` `94c078de…`, `portable.py` `a8e0fe90…`); if user's Windows folder is stale, re-copy `pro/` over it.
-2. **User on Windows**: run `build_windows.bat`, then `verify_package.bat`; paste full output. Expect `SELF-TEST PASSED` with no nvx/asgi/seed errors.
-3. If PASSED → clean-machine test: copy `dist\Proclaim\` to a fresh Win10/11 PC with no Python; double-click `Proclaim.exe`; confirm banner + firewall prompt (allow TCP 3000); confirm `data/proclaim.sqlite3` (~978 songs) + `media/` created next to exe; run twice to confirm no re-seed/reset of data.
-4. LAN test: phone (hotspot host) → `http://<LAN IP>:3000/control`; laptop → `/display/CHURCH1`; verify LIVE indicator, Style tab (font/size/background incl. uploaded image), Prev previews before Present. `start.sh`/restart needed for the dev server first.
-5. If any failure: reproduce on Linux via `/tmp/opencode/linuxbuild` (rebuild with `/tmp/opencode/pyikev/bin/pyinstaller`), fix in `proclaim/`, `cp` fixed files to `pro/`, then have the user re-run the `.bat` scripts.
-6. Optionally: zip `dist\Proclaim` for distribution.
+5. **Dev-only undefined-variable gate (ESLint no-undef):** `scripts/lint-js.sh`
+   + `scripts/eslintrc.browser.json` lint control.js / display.js /
+   song-slides.js with ONLY `no-undef:error` (browser+es6). It catches the
+   ReferenceError class that `node --check` cannot. Run: `bash scripts/lint-js.sh`.
+   First run flagged 14 identifiers — ALL intentional globals: `BiblePicker`
+   (defined in scripture-picker.js, loaded before control.js) and
+   `splitSongSlides` (song-slides.js), plus `module`/`globalThis` (Node test
+   shim inside song-slides.js). Pinned as `globals` in the config; no code
+   changes were needed (the v4 scope fix shows up CLEAN under no-undef). It is
+   dev-only: not in requirements.txt, not in Proclaim.spec, not bundled, and
+   eslint runs fully offline.
+6. **Automatic cache-busting:** replaced the hand-bumped `?v=N` with a
+   `{% staticver %}` template tag (`presentation/templatetags/versioned_static.py`).
+   It appends `?v=<source-file-mtime>`: dev resolves the real file via the
+   staticfiles finder (every edit re-versions), and in the portable build the
+   onedir copy inside `_internal` keeps its BUILD-TIME mtime, so the version is
+   stable per build and changes exactly when the app is rebuilt. If the file
+   cannot be resolved it falls back to the plain URL (page never breaks). Every
+   JS/CSS reference in index.html, control.html and display.html now uses it.
+   Proclaim.spec gained `presentation.templatetags` + `.versioned_static` as
+   hiddenimports because `{% load %}` imports them lazily at render time and
+   PyInstaller cannot statically see them.
+7. **Duplicate after re-fit (contain):** new test
+   `test_duplicate_of_contain_fit_image_points_at_existing_without_reset` —
+   upload → refit to "contain" → upload the same bytes → duplicate=True, same
+   id, fit stays "contain", 1 row in DB.
+8. **Upgrade safety (pre-0003 data):** scripted simulation with a fixture DB at
+   the 0002 schema (two legacy ImageItems — one with a space in the filename
+   "Vesper service.jpg" — plus a Room whose state points at
+   `/media/images/DSC_0485.jpg` old-style). Result:
+   - `migrate` applies `0003` cleanly on the legacy DB;
+   - `manage.py check` = no issues (app starts);
+   - real daphne boot: `GET /` 200, `GET /api/images` 200;
+   - `GET /api/images` lists both legacy images;
+   - presenting legacy id=1 over the REAL WebSocket path generated all variants
+     lazily (`ensure_variants`) and returned fit "blur" + backdrop
+     `/media/images/DSC_0485.strong.jpg`;
+   - every URL the wall would fetch (main, strong, thumb) returned 200 — no 404.
+   NOTE: `GET /api/images/` (WITH a trailing slash) is genuinely 404 by design:
+   the path is defined without one and APPEND_SLASH only ever adds, never
+   strips, a slash. The app/control only ever requests the proper URL.
+
+## Live-room notes
+
+- The repeated `404 /media/images/DSC_0485.jpg` hits were STALE pre-upgrade
+  room state: the room (CHURCH1) still pointed its presented image at the old
+  original-filename URL of a long-deleted file. Not a code defect. Once an
+  image was re-presented, state re-pointed to
+  `/media/images/test_image.jpg` (+ thumb/strong) and the 404s stopped.
+- Dev DB currently holds 3 images: id=1 "Sunday Service Title"
+  (images/test_image.jpg, fit "contain", sha blank — legacy), id=2 the
+  288 KB WhatsApp image (uuid-named, sha present), id=3 the 5 KB "-120x120"
+  WhatsApp download thumbnail (uuid-named, sha present — this is the upload
+  the phone UI wrongly labeled "failed" in the v3 bug). Rooms CHURCH1 /
+  DBG / DBG2 / FIT1 exist; CHURCH1 content is the image (blur-style
+  background), DBG/DBG2/FIT1 hold scripture samples.
+
+## Pending / next
+
+1. **User phone checklist review** (the following were NOT yet confirmed):
+   uploads incl. a ~12 MB photo through Daphne; HEIC rejection message;
+   multi-upload rows/counter; fit behavior on the wall (blur/contain/cover);
+   Style blur Off/Soft/Strong; the in-use delete block (incl. "queued"
+   refusal). NOTE: iPhone photos are HEIC → conversion to JPEG/PNG is
+   expected by the operator.
+2. **Still pending from the queue-nav task:** user's manual phone-width dock
+   check (qnav fits, labels, Last-slide hint).
+3. Then update this File, then user review, then optionally commit.
+
+## Environment / commands
+
+- Project: `/home/mohbohlahji/Projects/proclaim` (Django, .venv; daphne asgi).
+- Tests: `.venv/bin/python manage.py test presentation` (118 green currently)
+- JS: `node --check presentation/static/presentation/js/control.js` (and display.js);
+  undefined-variable gate: `bash scripts/lint-js.sh`
+- Server: `daphne -b 0.0.0.0 -p 8100 churchcast.asgi:application`
+- Migrations: `imageitem` gained fit / file_thumb / file_soft / file_strong /
+  sha256 (0003). Dev DB is SQLite and HAS been migrated.
+- Backfill: `.venv/bin/python manage.py backfill_images` (idempotent).
+- Dev notes: media uploads (<2.5MB in-memory; bigger stream to temp so
+  `DATA_UPLOAD_MAX_MEMORY_SIZE` is exempt) — no settings change for 12 MB files;
+  MEDIA_ROOT = `media/`; use `ImageItem._meta.get_field("file").storage` for
+  disk existence checks in tests (storage is cached across test classes).

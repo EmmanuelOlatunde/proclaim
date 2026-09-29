@@ -1,0 +1,84 @@
+{
+  "comment": "Shared input/expected pairs for the song slide splitter. The server (presentation/consumer.py split_song_slides) and the browser (presentation/static/presentation/js/song-slides.js splitSongSlides) must BOTH match every case here — presentation/tests.py and scripts/song_slides.test.js consume this file so the two implementations cannot drift. Lyrics are split on blank lines first; a section stays on one slide at 6 lines or fewer; longer sections are cut into balanced chunks (10 lines = 5+5, never 6+4).",
+  "cases": [
+    {
+      "name": "4_line_verse_stays_on_one_slide",
+      "lyrics": "Holy, holy, holy! Lord God Almighty!\nEarly in the morning our song Shall rise to Thee;\nHoly, holy, holy\u2019 merciful and mighty!\nGod in three Persons, blessed Trinity!",
+      "expected": [
+        "Holy, holy, holy! Lord God Almighty!\nEarly in the morning our song Shall rise to Thee;\nHoly, holy, holy\u2019 merciful and mighty!\nGod in three Persons, blessed Trinity!"
+      ]
+    },
+    {
+      "name": "6_lines_stay_together",
+      "lyrics": "L1\nL2\nL3\nL4\nL5\nL6",
+      "expected": [
+        "L1\nL2\nL3\nL4\nL5\nL6"
+      ]
+    },
+    {
+      "name": "7_lines_4_plus_3",
+      "lyrics": "L1\nL2\nL3\nL4\nL5\nL6\nL7",
+      "expected": [
+        "L1\nL2\nL3\nL4",
+        "L5\nL6\nL7"
+      ]
+    },
+    {
+      "name": "10_lines_split_5_plus_5",
+      "lyrics": "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10",
+      "expected": [
+        "L1\nL2\nL3\nL4\nL5",
+        "L6\nL7\nL8\nL9\nL10"
+      ]
+    },
+    {
+      "name": "11_lines_split_6_plus_5",
+      "lyrics": "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11",
+      "expected": [
+        "L1\nL2\nL3\nL4\nL5\nL6",
+        "L7\nL8\nL9\nL10\nL11"
+      ]
+    },
+    {
+      "name": "12_lines_split_6_plus_6",
+      "lyrics": "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12",
+      "expected": [
+        "L1\nL2\nL3\nL4\nL5\nL6",
+        "L7\nL8\nL9\nL10\nL11\nL12"
+      ]
+    },
+    {
+      "name": "13_lines_split_5_plus_4_plus_4",
+      "lyrics": "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL13",
+      "expected": [
+        "L1\nL2\nL3\nL4\nL5",
+        "L6\nL7\nL8\nL9",
+        "L10\nL11\nL12\nL13"
+      ]
+    },
+    {
+      "name": "blank_line_splits_paragraphs",
+      "lyrics": "Verse text A\nmore A\n\nVerse text B\nb2\nb3",
+      "expected": [
+        "Verse text A\nmore A",
+        "Verse text B\nb2\nb3"
+      ]
+    },
+    {
+      "name": "whitespace_only_line_splits",
+      "lyrics": "A1\n   \nB1",
+      "expected": [
+        "A1",
+        "B1"
+      ]
+    },
+    {
+      "name": "internal_blank_line_in_paragraph",
+      "lyrics": "P1\n\n\nP2",
+      "expected": [
+        "P1",
+        "P2"
+      ]
+    }
+  ]
+}

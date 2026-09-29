@@ -105,8 +105,21 @@ class Announcement(models.Model):
 
 
 class ImageItem(models.Model):
+    FIT_DEFAULT = "blur"
+    FIT_CHOICES = (("blur", "blur"), ("contain", "contain"), ("cover", "cover"))
+
     title = models.CharField(max_length=200, blank=True, default="")
     file = models.ImageField(upload_to="images/")
+    # Fit mode for the wall: "blur" fills with the image's own strong
+    # variant, "contain" letterboxes (black bars), "cover" crops edges.
+    fit = models.CharField(max_length=10, null=True, blank=True, default=FIT_DEFAULT)
+    # Processed variants (relative paths, generated with Pillow at upload).
+    # thumb (320 long edge) is what every phone picker loads; soft/strong
+    # are the pre-blurred background/backdrop files (no runtime blur).
+    file_thumb = models.CharField(max_length=300, blank=True, default="")
+    file_soft = models.CharField(max_length=300, blank=True, default="")
+    file_strong = models.CharField(max_length=300, blank=True, default="")
+    sha256 = models.CharField(max_length=64, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -115,8 +128,61 @@ class ImageItem(models.Model):
     def __str__(self):
         return self.title or self.file.name
 
+    def variant_name(self, kind):
+        return getattr(self, "file_" + kind, "") or ""
+
+    def variant_url(self, kind):
+        from django.conf import settings
+        name = self.variant_name(kind)
+        return settings.MEDIA_URL + name if name else ""
+
+    def fit_value(self):
+        return self.fit if self.fit in ("blur", "contain", "cover") else self.FIT_DEFAULT
+
+    def all_file_names(self):
+        names = [f.name for f in (self.file, ) if f]
+        names += [n for n in (self.file_thumb, self.file_soft, self.file_strong) if n]
+        return names
+
+    def ensure_variants(self):
+        """Idempotently (re)generate the thumb/soft/strong variants from the
+        stored main file. Returns True when it generated something. Called on
+        first request / backfill for images that predate the pipeline."""
+        if self.file_thumb and self.file_soft and self.file_strong:
+            return False
+        # clear any half-written state first
+        if not all((self.file_thumb, self.file_soft, self.file_strong)):
+            self.file_thumb = self.file_soft = self.file_strong = ""
+        from .image_pipeline import variant_files_from_source
+        try:
+            variants = variant_files_from_source(self.file.path)
+        except Exception:
+            return False
+        from django.core.files.storage import default_storage
+        for kind, name in (("thumb", self.file_thumb),
+                           ("soft", self.file_soft),
+                           ("strong", self.file_strong)):
+            if name:
+                default_storage.delete(name)
+        prefix = self.file.name.rsplit(".", 1)[0]
+        for kind, blob in variants.items():
+            out_name = "%s.%s.jpg" % (prefix, kind)
+            default_storage.save(out_name, blob)
+            setattr(self, "file_" + kind, out_name)
+        self.save(update_fields=["file_thumb", "file_soft", "file_strong"])
+        return True
+
     def to_dict(self):
-        return {"id": self.id, "title": self.title, "url": self.file.url}
+        return {
+            "id": self.id,
+            "title": self.title,
+            "url": self.file.url if self.file else "",
+            "thumb": self.variant_url("thumb") or (self.file.url if self.file else ""),
+            "soft": self.variant_url("soft"),
+            "strong": self.variant_url("strong"),
+            "fit": self.fit_value(),
+            "sha256": self.sha256,
+        }
 
 
 class QueueItem(models.Model):

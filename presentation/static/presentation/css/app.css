@@ -175,6 +175,26 @@ input, textarea { font-family: inherit; }
 .cc-nav__blank:active { transform: scale(0.96); }
 .cc-nav__blank.active { background: var(--danger); color: #fff; }
 
+/* Disabled slide / item nav — strictly a visual dim; the server enforces
+   the boundary, so this only communicates it to the operator. */
+.cc-nav__prev.is-off, .cc-nav__next.is-off,
+.cc-qnav__btn.is-off {
+  opacity: 0.38;
+  pointer-events: none;
+}
+.cc-nav__prev.is-off:hover, .cc-nav__next.is-off:hover,
+.cc-qnav__btn.is-off:hover { background: var(--elevated); }
+
+/* Small "Last slide" hint between the nav and queue rows */
+.cc-navhint {
+  font-size: 11px;
+  color: var(--text-2);
+  text-align: center;
+  padding: 0 14px 6px;
+  letter-spacing: 0.02em;
+}
+.cc-navhint[hidden] { display: none; }
+
 /* Slide strip (inside dock) */
 .cc-slides {
   display: flex; gap: 6px; padding: 8px 14px 0;
@@ -198,7 +218,7 @@ input, textarea { font-family: inherit; }
 /* Queue / service navigation row */
 .cc-qnav {
   display: grid;
-  grid-template-columns: 44px 1fr 44px 88px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr) 88px;
   gap: 8px;
   align-items: center;
   padding: 0 14px 10px;
@@ -217,6 +237,29 @@ input, textarea { font-family: inherit; }
 }
 .cc-qnav__btn:hover { background: var(--border); }
 .cc-qnav__btn:active { transform: scale(0.96); }
+/* Distinct item-nav buttons: dashed accent border, labeled, arrow at the
+   outer edge and the partner item's title tucked in toward the centre. */
+.cc-qnav__btn--item {
+  color: var(--accent);
+  border-style: dashed;
+  gap: 5px;
+  min-width: 0;
+  padding: 0 10px;
+}
+.cc-qnav__btn--item:hover:not(.is-off) { background: var(--accent-dim); border-color: var(--accent); }
+.cc-qnav__btn--item .cc-qnav__label { white-space: nowrap; }
+.cc-qnav__btn--item .cc-qnav__target {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+  max-width: 110px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.lbl-short { display: none; }
 .cc-qnav__btn--cd { font-size: 12px; font-weight: 700; color: var(--accent); }
 .cc-qnav__btn--cd:hover { background: var(--accent-dim); border-color: var(--accent); }
 .cc-qnav__pos {
@@ -224,6 +267,18 @@ input, textarea { font-family: inherit; }
   color: var(--text-2);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   text-align: center;
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .lbl-long { display: none; }
+  .lbl-short { display: inline; }
+  .cc-qnav__btn--item { font-size: 13px; padding: 0 8px; }
+  .cc-qnav__btn--item .cc-qnav__target { display: none; }
+}
+@media (max-width: 480px) {
+  .cc-qnav { gap: 6px; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr) 44px; }
+  .cc-qnav__pos { font-size: 11px; }
 }
 
 /* Tabs */
@@ -355,13 +410,13 @@ input, textarea { font-family: inherit; }
   position: absolute; top: 0; left: 0; right: 0; bottom: 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 8px;
-  text-align: center;
+  text-align: var(--d-align, center);
   padding: 6% 8%;
   font-family: var(--d-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
   border-radius: 12px;
 }
-.cc-mini-preview.has-bg .cc-mini-preview__inner {
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7), 0 0 16px rgba(0, 0, 0, 0.35);
+.cc-mini-preview__inner {
+  text-shadow: var(--d-shadow, none);
 }
 .cc-mini-preview__inner .cc-empty { margin: 0; }
 
@@ -377,19 +432,19 @@ input, textarea { font-family: inherit; }
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #FFFFFF;
+  color: var(--d-ref-color, #FFFFFF);
 }
 .cc-mini__title {
   font-size: calc(22px * var(--d-mult, 1));
   font-weight: 700;
-  color: #FFFFFF;
+  color: var(--d-ref-color, #FFFFFF);
   line-height: 1.2;
 }
 .cc-mini__text {
   font-size: calc(15px * var(--d-mult, 1));
-  font-weight: 400;
-  line-height: 1.55;
-  color: #E8ECF1;
+  font-weight: var(--d-weight, 400);
+  line-height: var(--d-line, 1.55);
+  color: var(--d-color, #E8ECF1);
   max-width: 88%;
   white-space: pre-wrap;
 }
@@ -405,7 +460,7 @@ input, textarea { font-family: inherit; }
 .cc-mini__countdown {
   font-size: calc(44px * var(--d-mult, 1));
   font-weight: 700;
-  color: #FFFFFF;
+  color: var(--d-color, #FFFFFF);
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
@@ -443,6 +498,29 @@ input, textarea { font-family: inherit; }
 /* Text size segmented control */
 .cc-size-seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .cc-size-seg .cc-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+
+/* Text style controls */
+.cc-color-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.cc-color-swatch {
+  width: 44px; height: 44px; border-radius: 10px; border: 2px solid var(--border);
+  outline: none; cursor: pointer;
+}
+.cc-color-swatch.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
+.cc-custom-color {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 44px;
+  padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--elevated); color: var(--text-2); font-size: 14px; cursor: pointer;
+}
+.cc-custom-color input[type="color"] {
+  width: 28px; height: 28px; border: none; background: none; padding: 0; cursor: pointer;
+}
+.cc-size-row { display: flex; align-items: center; gap: 12px; }
+.cc-size-slider { flex: 1; accent-color: var(--accent); min-height: 44px; }
+.cc-size-pct { min-width: 48px; text-align: right; color: var(--text-2); font-weight: 600; }
+.cc-warn {
+  margin-top: 8px; font-size: 13px; line-height: 1.4; color: #FFC07A;
+  background: rgba(255, 165, 0, 0.08); border-radius: var(--radius-sm); padding: 8px 10px;
+}
 
 /* ============================================================
    Scripture picker (grids, breadcrumb, verse dock, toast)
@@ -591,3 +669,44 @@ input, textarea { font-family: inherit; }
   .cc-modal-overlay { align-items: center; }
   .cc-modal { border-radius: var(--radius); }
 }
+
+/* ============================================================
+   Shared image fit stage — mirror of display.css (.d-image).
+   The control-side mini preview uses these same classes so it
+   renders byte-for-byte like the wall display. The pre-blurred
+   strong variant is the backdrop; no runtime blur is applied.
+   ============================================================ */
+.d-image { position: relative; width: 100%; height: 100%; overflow: hidden; background: #000; }
+.d-image__backdrop { position: absolute; inset: 0; }
+.d-image__backdrop img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.d-image__front { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.d-image--cover .d-image__front { object-fit: cover; }
+/* inside the mini display canvas: fill the whole 16:9 box */
+.cc-mini-preview__inner .d-image { position: absolute; inset: 0; }
+
+/* Fit selector (per-row dropdown in the Images tab) */
+.cc-fit-select {
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  max-width: 220px;
+}
+
+/* Multi-upload status rows */
+.cc-up-group { padding: 0 14px 10px; }
+.cc-up-count { font-size: 12px; color: var(--text-2); margin: 0 0 6px; font-variant-numeric: tabular-nums; }
+.cc-up-row {
+  display: flex; gap: 8px; align-items: center;
+  font-size: 12px; padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.cc-up-row__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-up-row__size { color: var(--text-2); flex-shrink: 0; }
+.cc-up-row__status { flex-shrink: 0; }
+.cc-up-row__status.err { color: var(--danger); }
+.cc-up-row__status.ok { color: var(--success); }
+.cc-up-row__status.dup { color: var(--text-2); }
+.cc-up-row__status.busy { color: var(--accent); }

@@ -3,13 +3,17 @@ HTTP views — page rendering + JSON REST API.
 """
 import json
 import re
+import uuid
 
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
 from django.db.models import Q
 from django.http import JsonResponse, HttpResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import render
 from .models import Room, Song, SongSection, Announcement, ImageItem, QueueItem
-from .song_import import parse_import
+from .song_import import parse_import_songs
+from .image_pipeline import process_image, ImageProcessError
 from .scripture import (
     parse_reference,
     build_slides,
@@ -21,6 +25,8 @@ from .scripture import (
     list_translations,
     resolve_translation,
 )
+
+MAX_IMAGE_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB, enforced before processing
 
 
 def _json_body(request):
@@ -167,12 +173,22 @@ def song_delete(request, song_id):
 
 @csrf_exempt
 def song_import(request):
-    """Parse text/chordpro into sections (preview, no save)."""
+    """Parse text/chordpro into song previews (no save).
+
+    Returns {"songs": [song_dict, ...]} where each song_dict has title,
+    title_found, language, warnings and sections. For backwards compatibility
+    the FIRST song's sections are also echoed under {"sections": [...]}.
+    """
     body = _json_body(request)
     text = body.get("text", "")
     fmt = body.get("format", "auto")
-    sections = parse_import(text, fmt)
-    return JsonResponse({"sections": sections})
+    if not str(text).strip():
+        return JsonResponse({"songs": [], "sections": []})
+    songs = parse_import_songs(text, fmt)
+    return JsonResponse({
+        "songs": songs,
+        "sections": songs[0]["sections"] if songs else [],
+    })
 
 
 # --- Announcements ---
@@ -235,9 +251,34 @@ def image_upload(request):
     f = request.FILES.get("file")
     if not f:
         return JsonResponse({"error": "no file"}, status=400)
-    title = request.POST.get("title", f.name)
-    img = ImageItem(title=title, file=f)
-    img.save()
+    if f.size and f.size > MAX_IMAGE_UPLOAD_BYTES:
+        return JsonResponse({"error": "File is larger than 15 MB."}, status=400)
+
+    title = request.POST.get("title", "") or f.name or "Image"
+    try:
+        result = process_image(f.read(), f.name)
+    except ImageProcessError as exc:
+        return JsonResponse({"error": exc.message}, status=400)
+
+    # Duplicate (same processed bytes) -> report, never store a second copy.
+    dup = ImageItem.objects.filter(sha256=result["sha256"]).first()
+    if dup:
+        return JsonResponse({"duplicate": True, "image": dup.to_dict()})
+
+    stem = uuid.uuid4().hex
+    thumb_name = default_storage.save("images/%s.thumb.jpg" % stem, ContentFile(result["variants"]["thumb"]))
+    soft_name = default_storage.save("images/%s.soft.jpg" % stem, ContentFile(result["variants"]["soft"]))
+    strong_name = default_storage.save("images/%s.strong.jpg" % stem, ContentFile(result["variants"]["strong"]))
+    img = ImageItem(
+        title=(title[:200] if title else "Image"),
+        file_thumb=thumb_name,
+        file_soft=soft_name,
+        file_strong=strong_name,
+        sha256=result["sha256"],
+    )
+    # file.save uploads into the ImageField's upload_to ("images/"), so pass
+    # just the leaf name to avoid a double "images/images/" prefix.
+    img.file.save("%s.%s" % (stem, result["ext"]), ContentFile(result["main"]), save=True)
     return JsonResponse({"image": img.to_dict()})
 
 
@@ -246,23 +287,65 @@ def image_detail(request, image_id):
     img = ImageItem.objects.filter(id=image_id).first()
     if not img:
         return JsonResponse({"error": "not found"}, status=404)
+
+    if request.method == "POST":
+        body = _json_body(request)
+        fit = body.get("fit")
+        if fit in ("blur", "contain", "cover"):
+            img.fit = fit
+            img.save(update_fields=["fit"])
+        return JsonResponse({"image": img.to_dict()})
+
     if request.method == "DELETE":
-        # Deleting an image that is the LIVE background of a room during a
-        # service would silently change what the congregation sees, so block
-        # it and name the room(s). The check runs against every room (room
-        # state references the background by image URL).
-        rooms = rooms_using_background(img.file.url)
-        if rooms:
-            detail = ", ".join(rooms)
+        # Deleting an image that is in use (as any room's background at any
+        # blur level, currently presented in any room, or referenced by a
+        # queue entry) would silently change what service operators and the
+        # congregation see. Block it and name every room involved; the queue
+        # entry keeps the image's ref_id, so the operator must remove it
+        # from the queue first. Refusal never deletes the queue item itself.
+        blockers = image_blockers(img)
+        if blockers:
+            detail = "; ".join(
+                "%s (%s)" % (code, ", ".join(sorted(set(reasons))))
+                for code, reasons in sorted(blockers.items())
+            )
             return JsonResponse(
-                {"error": f"Image is the active background in: {detail}",
-                 "rooms": rooms},
+                {"error": "Image is in use by: %s. Remove it from the service/queue before deleting." % detail,
+                 "rooms": sorted(blockers.keys())},
                 status=409,
             )
-        img.file.delete(save=False)
+        for name in img.all_file_names():
+            default_storage.delete(name)
         img.delete()
         return JsonResponse({"ok": True})
+
+    # Legacy images have no variants yet: generate them lazily on first read.
+    img.ensure_variants()
     return JsonResponse({"image": img.to_dict()})
+
+
+def image_blockers(img):
+    """Image IDs/codes of every reason an image cannot be deleted, keyed by
+    room code. An image is in use when it is:
+      - the current background of a room at any blur level (the state stores
+        the main URL under styles.background.value regardless of blur),
+      - the content currently presented in a room (contentType "image" with a
+        matching itemId),
+      - referenced by any QueueItem in any room (item_type "image", ref_id =
+        the image's database id; an ImageField replacement would not cover
+        these references, so they must block deletion).
+    """
+    blockers = {}
+    for room in Room.objects.all():
+        state = room.get_state()
+        bg = (state.get("styles") or {}).get("background") or {}
+        if bg.get("type") == "image" and bg.get("value") == img.file.url:
+            blockers.setdefault(room.code, []).append("background")
+        if state.get("contentType") == "image" and state.get("itemId") == img.id:
+            blockers.setdefault(room.code, []).append("presented")
+    for qi in QueueItem.objects.filter(item_type="image", ref_id=img.id).select_related("room"):
+        blockers.setdefault(qi.room.code, []).append("queued")
+    return blockers
 
 
 def rooms_using_background(image_url):

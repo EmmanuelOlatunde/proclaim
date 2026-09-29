@@ -17,6 +17,11 @@ a = Analysis(
         # existing application code keeps resolving inside _internal/.
         ("presentation/templates", "presentation/templates"),
         ("presentation/static", "presentation/static"),
+        # Bundled display fonts (self-hosted woff2 + OFL licences). Also
+        # covered by the whole-tree entry above; listed explicitly so adding
+        # or removing a font family is a visible packaging decision.
+        ("presentation/static/presentation/fonts", "presentation/static/presentation/fonts"),
+        ("presentation/static/presentation/fonts/LICENSES", "presentation/static/presentation/fonts/LICENSES"),
         ("presentation/data", "presentation/data"),
         # Read-only first-run seed: a snapshot of today's database (the 975
         # imported hymns, songs, rooms) plus uploaded media. portable.py
@@ -52,6 +57,12 @@ a = Analysis(
         "twisted.logger",
         "zope.interface",
         "autobahn.twisted.websocket",
+        # The template tag library used by {% load versioned_static %} in every
+        # HTML page is imported lazily by Django's template engine at render
+        # time, so static analysis never sees it; without this the packaged
+        # pages would fail to render.
+        "presentation.templatetags",
+        "presentation.templatetags.versioned_static",
         # Django management commands invoked BY NAME at startup (invisible to
         # PyInstaller's static analysis).
         "django.core.management.commands.migrate",

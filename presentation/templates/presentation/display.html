@@ -1,11 +1,12 @@
-{% load static %}
+{% load versioned_static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Display — {{ room_code }}</title>
-<link rel="stylesheet" href="{% static 'presentation/css/display.css' %}">
+<link rel="stylesheet" href="{% staticver 'presentation/css/fonts.css' %}">
+<link rel="stylesheet" href="{% staticver 'presentation/css/display.css' %}">
 </head>
 <body>
 <div id="display">
@@ -19,6 +20,6 @@
 window.ROOM_CODE = "{{ room_code }}";
 window.HOST = "{{ host }}";
 </script>
-<script src="{% static 'presentation/js/display.js' %}"></script>
+<script src="{% staticver 'presentation/js/display.js' %}"></script>
 </body>
 </html>

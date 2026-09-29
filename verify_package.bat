@@ -46,8 +46,9 @@ if errorlevel 1 (
     goto :failcleanup
 )
 
-echo [4/6] Testing pages, static files and scripture data...
-"%SYSTEMROOT%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command "$paths=@('/','/control','/display/CHURCH1','/static/presentation/css/app.css','/api/scripture/index'); $bad=@(); foreach($p in $paths){ try { $r=Invoke-WebRequest -UseBasicParsing -TimeoutSec 20 -ErrorAction Stop ('http://127.0.0.1:3999'+$p); if($r.StatusCode -ne 200){ $bad+=$p } } catch { $bad+=$p } }; if($bad.Count -gt 0){ 'FAILED on: '+($bad -join ', '); exit 1 } else { '        all endpoints returned HTTP 200' }"
+echo [4/6] Testing pages, static files, scripture data and the {% staticver %}
+echo        cache-bust, plus a bundled display font must be served...
+"%SYSTEMROOT%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command "$paths=@('/','/control','/display/CHURCH1','/static/presentation/css/app.css','/static/presentation/css/fonts.css','/static/presentation/fonts/noto-sans-latin-400.woff2','/api/scripture/index'); $bad=@(); foreach($p in $paths){ try { $r=Invoke-WebRequest -UseBasicParsing -TimeoutSec 20 -ErrorAction Stop ('http://127.0.0.1:3999'+$p); if($r.StatusCode -ne 200){ $bad+=$p } } catch { $bad+=$p } }; if($bad.Count -gt 0){ 'FAILED on: '+($bad -join ', '); exit 1 }; $c=(Invoke-WebRequest -UseBasicParsing -TimeoutSec 20 'http://127.0.0.1:3999/control').Content; if($c -notmatch 'control\.js\?v='){ 'FAILED: /control has no ?v= on control.js (template tag bundled missing)'; exit 1 } else { '        all endpoints returned HTTP 200; control.js carries ?v= (template tag working)' }"
 if errorlevel 1 goto :failcleanup
 
 echo [5/6] Stopping Proclaim...
@@ -63,6 +64,9 @@ echo ============================================
 echo   - Proclaim starts with no Python installed
 echo   - Daphne serves real HTTP requests
 echo   - pages, static files and scripture data load
+echo   - a bundled display font (fonts.css + noto-sans woff2) is served
+echo   - control page carries the ?v= cache-bust ({% staticver %} template tag
+echo     is included in the bundle)
 echo.
 echo   Final manual checks on the church LAN:
 echo     control : http://LAN-IP:3000/control

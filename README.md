@@ -140,10 +140,17 @@ on success. (It will close any running Proclaim.exe first.)
   `churchcast/urls.py` only work in DEBUG mode (Daphne, unlike `runserver`, does not wire
   static files up automatically). Do not expose the app to the public Internet.
 - The `"Hidden import … not found"` warnings during the build are **expected and harmless** —
-  they come from PyInstaller's own `hook-django.py` probing `<app>.templatetags` and
-  `<app>.context_processors` for every installed app (none of this project's apps define
-  them), plus optional modules like `pycparser.lextab`, the unused Oracle DB backend, and
-  the deliberately-excluded `channels.testing`. The build still exits 0.
+  they come from PyInstaller's own `hook-django.py` probing `<app>.context_processors` for
+  every installed app (none of this project's apps define those), plus optional modules like
+  `pycparser.lextab`, the unused Oracle DB backend, and the deliberately-excluded
+  `channels.testing`. The build still exits 0.
+- **EXCEPTION — one warning must NOT appear:** a `"Hidden import 'presentation.templatetags'
+  not found"` warning is now a build defect. The project has a real template-tag package
+  (`presentation/templatetags/versioned_static.py`, which powers the `{% staticver %}`
+  cache-bust on every CSS/JS reference) and it is deliberately listed in `Proclaim.spec`
+  `hiddenimports`. If that warning reappears, the tag package was not bundled and the served
+  pages will fail to render — `verify_package.bat` catches it via the `?v=` check on the
+  `/control` page.
 
 ### Ports
 
