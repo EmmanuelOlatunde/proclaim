@@ -91,7 +91,7 @@
     content.classList.toggle("d-image-stage", ct === "image");
 
     if (!ct) {
-      content.innerHTML = '<div class="d-placeholder">Awaiting presentation…</div>';
+      content.innerHTML = '<div class="d-slide__note">Awaiting presentation…</div>';
       return;
     }
 
@@ -133,9 +133,9 @@
     var slide = slides[idx] || slides[0];
     if (!slide) { content.innerHTML = ""; return; }
     content.innerHTML =
-      '<div class="d-scripture">' +
-        '<div class="d-scripture__ref">' + esc(slide.reference) + "</div>" +
-        '<div class="d-scripture__text">\u201C' + esc(slide.text) + "\u201D</div>" +
+      '<div class="d-slide d-slide--scripture">' +
+        '<div class="d-slide__ref">' + esc(slide.reference) + "</div>" +
+        '<div class="d-slide__verse">\u201C' + esc(slide.text) + "\u201D</div>" +
       "</div>";
   }
 
@@ -144,20 +144,22 @@
     var slide = slides[idx] || slides[0];
     if (!slide) { content.innerHTML = ""; return; }
     var labelHtml = slide.label
-      ? '<div class="d-song__label">' + esc(slide.label) + "</div>"
+      ? '<div class="d-slide__label">' + esc(slide.label) + "</div>"
       : "";
     content.innerHTML =
-      '<div class="d-song">' +
+      '<div class="d-slide d-slide--song">' +
         labelHtml +
-        '<div class="d-song__text">' + esc(slide.text) + "</div>" +
+        '<div class="d-slide__lyric">' + esc(slide.text) + "</div>" +
       "</div>";
   }
 
   function renderAnnouncement(c) {
-    var body = c.body ? '<div class="d-announcement__body">' + esc(c.body).replace(/\n/g, "<br>") + "</div>" : "";
+    var title = (c.title || "").trim();
+    var body = c.body ? '<div class="d-slide__body">' + esc(c.body).replace(/\n/g, "<br>") + "</div>" : "";
+    // Title and body are centred horizontally and vertically as one slide.
     content.innerHTML =
-      '<div class="d-announcement">' +
-        '<div class="d-announcement__title">' + esc(c.title || "") + "</div>" +
+      '<div class="d-slide d-slide--announcement">' +
+        (title ? '<div class="d-slide__title">' + esc(title) + "</div>" : "") +
         body +
       "</div>";
   }
@@ -176,14 +178,14 @@
 
   function renderCountdown(cd) {
     if (!cd || !cd.endTime) {
-      content.innerHTML = '<div class="d-placeholder">Countdown</div>';
+      content.innerHTML = '<div class="d-slide__note">Countdown</div>';
       return;
     }
     var title = cd.title || "";
     content.innerHTML =
-      '<div class="d-countdown">' +
-        (title ? '<div class="d-countdown__label">' + esc(title) + "</div>" : "") +
-        '<div class="d-countdown__time" id="cdTime">0:00</div>' +
+      '<div class="d-slide d-slide--countdown">' +
+        (title ? '<div class="d-slide__timer-label">' + esc(title) + "</div>" : "") +
+        '<div class="d-slide__timer" id="cdTime">0:00</div>' +
       "</div>";
     startCountdown(cd.endTime);
   }
@@ -240,10 +242,18 @@ function setCssVar(root, name, value) {
   else root.style.setProperty(name, value);
 }
 
+// Background kinds. "color" and "image" are the original two; "transparent"
+// and "chroma" are the compositing modes.
+var DEFAULT_BG_COLOR = "#05070A";
+var CHROMA_DEFAULT_COLOR = "#00FF00";
+
 // Chooses the text-shadow the operator asked for. Auto means: always on for
 // image backgrounds; on solid backgrounds only when it actually helps
-// (dark text gets a light shadow, light text a dark one).
-function textShadowFor(styles, bgIsImage) {
+// (dark text gets a light shadow, light text a dark one). Transparent and
+// chroma backgrounds always get the dark shadow for light text, because
+// nothing about the frame behind the text is known — this is what keeps an
+// overlay readable over arbitrary video.
+function textShadowFor(styles, bgMode) {
   var mode = styles.shadow || "auto";
   if (mode === "off") return "none";
   var hex = /^#[0-9a-f]{6}$/.test(styles.textColor) ? styles.textColor : "#F5F7FA";
@@ -255,8 +265,80 @@ function textShadowFor(styles, bgIsImage) {
       ? "0 2px 6px rgba(0,0,0,0.7), 0 6px 30px rgba(0,0,0,0.55)"
       : "0 2px 6px rgba(255,255,255,0.6), 0 6px 30px rgba(255,255,255,0.4)";
   }
-  if (!light && !bgIsImage) return "0 1px 3px rgba(255,255,255,0.55), 0 0 18px rgba(255,255,255,0.25)";
+  if (!light && bgMode === "color") return "0 1px 3px rgba(255,255,255,0.55), 0 0 18px rgba(255,255,255,0.25)";
   return "0 1px 4px rgba(0,0,0,0.65), 0 0 24px rgba(0,0,0,0.35)";
+}
+
+// Reads the background the display should paint, honouring a per-display
+// override (/display/ROOM?bg=transparent) so a dedicated vMix overlay browser
+// can be transparent without changing the room the congregation is watching.
+function effectiveBackground(styles) {
+  var bg = (styles || {}).background || {};
+  var override = (window.DISPLAY_BG || "").toLowerCase();
+  if (override && override !== "room") {
+    return override === "transparent"
+      ? { type: "transparent" }
+      : { type: "chroma", value: CHROMA_DEFAULT_COLOR };
+  }
+  return bg;
+}
+
+// Applies the background to every painted surface. Each of html, body, #display
+// , the blanked stage and an image's letterbox reads one of the three
+// --d-*-bg variables set here, so one branch covers the whole frame and
+// nothing opaque can survive.
+function applyBackground(bg) {
+  var root = document.documentElement;
+  var disp = document.getElementById("display");
+  var stage = document.getElementById("stage");
+  var type = bg && bg.type;
+
+  root.classList.toggle("d-transparent", type === "transparent");
+
+  if (type === "image" && bg.value) {
+    var src = bg.value;
+    if (bg.blur === "soft" || bg.blur === "strong") src = imageVariantUrl(src, bg.blur);
+    disp.style.backgroundImage = "url('" + src + "')";
+    disp.style.backgroundSize = "cover";
+    disp.style.backgroundPosition = "center";
+    stage.classList.add("has-bg");
+    // The page background stays the near-black base colour: it is only ever seen
+    // behind the cover-fitted image, and --d-page-bg must remain a *colour* (it
+    // is used as `background:` on html and body, where a URL would be invalid).
+    root.style.setProperty("--d-page-bg", "#05070A");
+    root.style.setProperty("--d-blank-bg", "#000");
+    root.style.setProperty("--d-figure-bg", "#000");
+    // Clear any inline tint left by a previous colour/chroma mode.
+    disp.style.backgroundColor = "";
+    return;
+  }
+
+  disp.style.backgroundImage = "";
+  stage.classList.remove("has-bg");
+
+  if (type === "transparent") {
+    // Genuine alpha: html, body and #display all resolve to transparent, and
+    // the blanked stage and image letterbox follow so nothing flashes an
+    // opaque rectangle over the program underneath.
+    root.style.setProperty("--d-page-bg", "transparent");
+    root.style.setProperty("--d-blank-bg", "transparent");
+    root.style.setProperty("--d-figure-bg", "transparent");
+    disp.style.backgroundColor = "";
+    return;
+  }
+
+  var color;
+  if (type === "chroma") {
+    color = /^#[0-9a-f]{6}$/i.test(bg.value || "") ? bg.value : CHROMA_DEFAULT_COLOR;
+    root.style.setProperty("--d-blank-bg", color);
+    root.style.setProperty("--d-figure-bg", color);
+  } else {
+    color = (type === "color" && bg.value) ? bg.value : DEFAULT_BG_COLOR;
+    root.style.setProperty("--d-blank-bg", "#000");
+    root.style.setProperty("--d-figure-bg", "#000");
+  }
+  root.style.setProperty("--d-page-bg", color);
+  disp.style.backgroundColor = color;
 }
 
 // Applies operator styles (font / text size / colour / weight / spacing /
@@ -270,26 +352,14 @@ function applyStyles(styles) {
   setCssVar(root, "--d-ref-color", styles.referenceColor);
   setCssVar(root, "--d-weight", styles.bold ? "700" : "");
   setCssVar(root, "--d-line", LINE_SCALE[styles.lineSpacing]);
-  setCssVar(root, "--d-align", styles.align === "left" ? "left" : "");
 
-  var disp = document.getElementById("display");
-  var stage = document.getElementById("stage");
-  var bg = styles.background || {};
-  var bgIsImage = bg.type === "image" && bg.value;
-  if (bgIsImage) {
-    var src = bg.value;
-    if (bg.blur === "soft" || bg.blur === "strong") src = imageVariantUrl(src, bg.blur);
-    disp.style.backgroundImage = "url('" + src + "')";
-    disp.style.backgroundSize = "cover";
-    disp.style.backgroundPosition = "center";
-    stage.classList.add("has-bg");
-  } else {
-    disp.style.backgroundImage = "";
-    stage.classList.remove("has-bg");
-    var col = (bg.type === "color" && bg.value) ? bg.value : "#05070A";
-    disp.style.backgroundColor = col;
-  }
-  root.style.setProperty("--d-shadow", textShadowFor(styles, bgIsImage));
+  // Alignment is a design-system token now (--pres-text-align) rather than a
+  // value pasted onto one container, so every slide type follows it.
+  setCssVar(root, "--pres-text-align", styles.align === "left" ? "left" : "");
+
+  var bg = effectiveBackground(styles);
+  applyBackground(bg);
+  root.style.setProperty("--d-shadow", textShadowFor(styles, bg && bg.type));
   warmFonts(styles.font);
 }
 

@@ -14,6 +14,8 @@ from django.shortcuts import render
 from .models import Room, Song, SongSection, Announcement, ImageItem, QueueItem
 from .song_import import parse_import_songs
 from .image_pipeline import process_image, ImageProcessError
+from . import netinfo
+from .consumer import presence, rooms_with_controller
 from .scripture import (
     parse_reference,
     build_slides,
@@ -27,6 +29,10 @@ from .scripture import (
 )
 
 MAX_IMAGE_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB, enforced before processing
+
+# Per-display background overrides: "room" (default) follows the room's own
+# style, "transparent" is genuinely see-through, "chroma" paints a key colour.
+DISPLAY_BG_CHOICES = ("room", "transparent", "chroma")
 
 
 def _json_body(request):
@@ -45,7 +51,16 @@ def _host(request):
 
 def index_page(request):
     rooms = Room.objects.all()
-    return render(request, "presentation/index.html", {"rooms": rooms, "host": _host(request)})
+    # The landing page is what the operator opens on the laptop first, so this
+    # is where the "connect your phone" panel (QR code + reachable local URLs +
+    # controller status) belongs. Everything is computed locally.
+    return render(request, "presentation/index.html", {
+        "rooms": rooms,
+        "host": _host(request),
+        "network": netinfo.network_report(request),
+        "presence": {room.code: presence(room.code) for room in rooms},
+        "connected_rooms": rooms_with_controller(),
+    })
 
 
 def control_page(request):
@@ -55,7 +70,73 @@ def control_page(request):
 
 def display_page(request, room_code):
     Room.objects.get_or_create(code=room_code)
-    return render(request, "presentation/display.html", {"room_code": room_code, "host": _host(request)})
+    # ?bg= pins this browser's frame independently of the room, so a dedicated
+    # vMix overlay browser can stay transparent while the room itself is normal.
+    display_bg = request.GET.get("bg", "room").strip().lower()
+    if display_bg not in DISPLAY_BG_CHOICES:
+        display_bg = "room"
+    return render(request, "presentation/display.html", {
+        "room_code": room_code,
+        "host": _host(request),
+        "display_bg": display_bg,
+    })
+
+
+# --- Connect (local network discovery) ---
+#
+# Everything here is about making the phone able to reach this laptop. It runs
+# entirely on the machine running Proclaim and returns only local addresses —
+# nothing is looked up, uploaded or contacted.
+
+def network_info(request):
+    """Which local addresses a phone could use, plus the firewall reminder."""
+    report = netinfo.network_report(request)
+    report["rooms"] = [
+        {"code": room.code, "name": room.name}
+        for room in Room.objects.all()
+    ]
+    report["presence"] = {
+        room.code: presence(room.code) for room in Room.objects.all()
+    }
+    return JsonResponse(report)
+
+
+def network_qr(request):
+    """A QR code PNG encoding one of the local URLs above.
+
+    Generated on this machine by segno (pure Python, its own PNG writer). No
+    online QR service is contacted and no external asset is loaded.
+    """
+    port = netinfo.server_port(request)
+    options = netinfo.connection_options(port)
+    raw_index = request.GET.get("index", "0")
+    try:
+        index = int(raw_index)
+    except (TypeError, ValueError):
+        index = 0
+    if not options:
+        options = [{"url": netinfo.primary_url(port), "label": "This computer"}]
+    index = max(0, min(index, len(options) - 1))
+    chosen = options[index]
+    try:
+        png = netinfo.qr_png_bytes(chosen["url"])
+    except Exception:  # pragma: no cover - segno import/encoding failure
+        return JsonResponse({"error": "could not generate QR code"}, status=500)
+    response = HttpResponse(png, content_type="image/png")
+    # The URL it encodes is local and can change (hotspot reconnected, DHCP
+    # lease), so it must never be cached by the browser or a service worker.
+    response["Cache-Control"] = "no-store"
+    response["X-Proclaim-Url"] = chosen["url"]
+    return response
+
+
+def room_presence(request, code):
+    """Is a controller (the phone) connected to this room right now?"""
+    room, _ = Room.objects.get_or_create(code=code)
+    counts = presence(room.code)
+    counts["code"] = room.code
+    counts["connected"] = counts["control"] > 0
+    return JsonResponse(counts)
 
 
 # --- Room / Queue ---

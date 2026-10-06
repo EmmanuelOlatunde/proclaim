@@ -6,6 +6,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Display — {{ room_code }}</title>
 <link rel="stylesheet" href="{% staticver 'presentation/css/fonts.css' %}">
+<!-- Shared presentation design system: every projected typography rule lives
+     here, before display.css, which only owns the frame. -->
+<link rel="stylesheet" href="{% staticver 'presentation/css/presentation.css' %}">
 <link rel="stylesheet" href="{% staticver 'presentation/css/display.css' %}">
 </head>
 <body>
@@ -17,6 +20,11 @@
   </div>
 </div>
 <script>
+// "room" (the default) follows the room's own background style. Any other
+// value pins this browser's frame regardless of the room, which is how a
+// dedicated vMix overlay browser is kept transparent while the room the
+// congregation watches stays normal: /display/CHURCH1?bg=transparent
+window.DISPLAY_BG = "{{ display_bg|default:'room' }}";
 window.ROOM_CODE = "{{ room_code }}";
 window.HOST = "{{ host }}";
 </script>

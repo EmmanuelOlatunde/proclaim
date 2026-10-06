@@ -52,9 +52,13 @@
   var cdBtn = el("cdBtn");
 
   // --- WebSocket ---
+  // The controller uses the /ws/control/ route. It reaches the same room group
+  // and speaks the identical protocol as the display; the only difference is
+  // that the server records it as a controller, which is what lets the
+  // laptop's Connect panel report "phone connected".
   function wsUrl() {
     var proto = location.protocol === "https:" ? "wss:" : "ws:";
-    return proto + "//" + location.host + "/ws/room/" + ROOM_CODE + "/";
+    return proto + "//" + location.host + "/ws/control/" + ROOM_CODE + "/";
   }
 
   function connect() {
@@ -195,8 +199,9 @@
   }
 
   // Mirror of display.js textShadowFor: auto applies a dark shadow to light
-  // text and a light shadow to dark text, and is always on for images.
-  function textShadowFor(styles, bgIsImage) {
+  // text and a light shadow to dark text, and is always on for images and for
+  // the compositing backgrounds, where nothing behind the text is known.
+  function textShadowFor(styles, bgMode) {
     var mode = styles.shadow || "auto";
     if (mode === "off") return "none";
     var hex = /^#[0-9a-f]{6}$/.test(styles.textColor) ? styles.textColor : "#F5F7FA";
@@ -208,7 +213,7 @@
         ? "0 2px 6px rgba(0,0,0,0.7), 0 6px 30px rgba(0,0,0,0.55)"
         : "0 2px 6px rgba(255,255,255,0.6), 0 6px 30px rgba(255,255,255,0.4)";
     }
-    if (!light && !bgIsImage) return "0 1px 3px rgba(255,255,255,0.55), 0 0 18px rgba(255,255,255,0.25)";
+    if (!light && bgMode === "color") return "0 1px 3px rgba(255,255,255,0.55), 0 0 18px rgba(255,255,255,0.25)";
     return "0 1px 4px rgba(0,0,0,0.65), 0 0 24px rgba(0,0,0,0.35)";
   }
 
@@ -222,9 +227,11 @@
     setCssVar(root, "--d-ref-color", styles.referenceColor);
     setCssVar(root, "--d-weight", styles.bold ? "700" : "");
     setCssVar(root, "--d-line", LINE_SCALE[styles.lineSpacing]);
-    setCssVar(root, "--d-align", styles.align === "left" ? "left" : "");
-    var bgIsImage = (styles.background || {}).type === "image" && !!(styles.background || {}).value;
-    setCssVar(root, "--d-shadow", textShadowFor(styles, bgIsImage));
+    // Alignment is a design-system token (--pres-text-align), shared with the
+    // wall — the mirror of display.js.
+    setCssVar(root, "--pres-text-align", styles.align === "left" ? "left" : "");
+    var bgType = (styles.background || {}).type || "color";
+    setCssVar(root, "--d-shadow", textShadowFor(styles, bgType));
     warmFonts(styles.font);
   }
 
@@ -241,9 +248,16 @@
     } catch (e) {}
   }
 
+  // The control page never goes see-through — it is a preview, not the wall —
+  // but chroma mode is mirrored faithfully, because seeing the flat key colour
+  // is what tells the operator what vMix will actually key out.
   function applyBgTo(el, styles) {
     var bg = (styles || {}).background || {};
-    if (bg.type === "image" && bg.value) {
+    var type = bg.type;
+    // Clear the checkerboard up front: every mode other than transparent must
+    // not keep it, and doing it here means no branch can inherit a stale class.
+    el.classList.remove("cc-transparent");
+    if (type === "image" && bg.value) {
       var src = bg.value;
       if (bg.blur === "soft" || bg.blur === "strong") src = imageVariantUrl(src, bg.blur);
       el.style.backgroundImage = "url('" + src + "')";
@@ -251,10 +265,18 @@
       el.style.backgroundPosition = "center";
       el.style.backgroundColor = "#05070A";
       el.classList.add("has-bg");
+      return;
+    }
+    el.style.backgroundImage = "";
+    el.classList.remove("has-bg");
+    if (type === "chroma") {
+      el.style.backgroundColor = /^#[0-9a-f]{6}$/i.test(bg.value || "") ? bg.value : "#00FF00";
+    } else if (type === "transparent") {
+      // Show the key-look: a checkerboard stands in for "nothing here".
+      el.style.backgroundColor = "#05070A";
+      el.classList.add("cc-transparent");
     } else {
-      el.style.backgroundImage = "";
-      el.style.backgroundColor = (bg.type === "color" && bg.value) ? bg.value : "#05070A";
-      el.classList.remove("has-bg");
+      el.style.backgroundColor = (type === "color" && bg.value) ? bg.value : "#05070A";
     }
   }
 
@@ -282,7 +304,10 @@
     return Math.max(1, Math.round(n / 1024)) + " KB";
   }
 
-  // Builds inner HTML for the given content, mirroring display.js.
+  // Builds inner HTML for the given content using the SAME semantic slide
+  // classes as display.js (.d-slide and roles), so the phone preview is styled
+  // by the shared design system in presentation.css rather than by a private
+  // copy of it. The mini box only overrides --pres-em to a thumbnail size.
   function renderPreviewInto(container, ct, c, idx, styles) {
     applyStylesGlobally(styles);
     applyBgTo(container, styles);
@@ -291,19 +316,20 @@
     if (ct === "song") {
       var sslides = c.slides || [];
       slide = sslides[idx] || sslides[0] || {};
-      html =
-        (slide.label ? '<div class="cc-mini__song-label">' + esc(slide.label) + "</div>" : "") +
-        '<div class="cc-mini__text">' + esc(slide.text) + "</div>";
+      html = '<div class="d-slide d-slide--song">' +
+        (slide.label ? '<div class="d-slide__label">' + esc(slide.label) + "</div>" : "") +
+        '<div class="d-slide__lyric">' + esc(slide.text || "") + "</div></div>";
     } else if (ct === "scripture") {
       var s2 = c.slides || [];
       slide = s2[idx] || s2[0] || {};
-      html =
-        '<div class="cc-mini__ref">' + esc(slide.reference || c.reference || "") + "</div>" +
-        '<div class="cc-mini__text">\u201C' + esc(slide.text) + "\u201D</div>";
+      html = '<div class="d-slide d-slide--scripture">' +
+        '<div class="d-slide__ref">' + esc(slide.reference || c.reference || "") + "</div>" +
+        '<div class="d-slide__verse">\u201C' + esc(slide.text || "") + "\u201D</div></div>";
     } else if (ct === "announcement") {
-      html =
-        '<div class="cc-mini__title">' + esc(c.title || "") + "</div>" +
-        (c.body ? '<div class="cc-mini__text">' + esc(c.body) + "</div>" : "");
+      html = '<div class="d-slide d-slide--announcement">' +
+        (c.title ? '<div class="d-slide__title">' + esc(c.title) + "</div>" : "") +
+        (c.body ? '<div class="d-slide__body">' + esc(c.body).replace(/\n/g, "<br>") + "</div>" : "") +
+        "</div>";
     } else if (ct === "image") {
       var fit = c.fit || "blur";
       var back = c.backdrop || imageVariantUrl(c.url || "", "strong");
@@ -313,10 +339,12 @@
       }
       html += '<img class="d-image__front" src="' + esc(c.url || "") + '" alt=""></div>';
     } else if (ct === "countdown") {
-      html = '<div class="cc-mini__countdown-label">' + esc(c.title || "") + "</div>" +
-        '<div class="cc-mini__countdown">0:00</div>';
+      html = '<div class="d-slide d-slide--countdown">' +
+        (c.title ? '<div class="d-slide__timer-label">' + esc(c.title) + "</div>" : "") +
+        '<div class="d-slide__timer">0:00</div></div>';
     }
-    container.innerHTML = html || '<div class="cc-empty">Nothing to preview.</div>';
+    if (!html) html = '<div class="d-slide__note">Nothing to preview.</div>';
+    container.innerHTML = html;
   }
 
   // Sample content used by the Style editor so the look can be tuned live.
@@ -1331,10 +1359,30 @@
 
   // --- Style editor (font / text size / background) ---
   var BG_COLORS = ["#05070A", "#0B0F14", "#000000", "#FFFFFF", "#1E2A38"];
+  var CHROMA_DEFAULT_COLOR = "#00FF00";
+  // Chroma presets: pure chroma primaries plus black, so an operator can pick a
+  // key colour that vMix/OBS can key out cleanly.
+  var CHROMA_PRESETS = ["#00FF00", "#00B140", "#FF00FF", "#0000FF", "#000000"];
+  // The four background kinds, matching the server's styles.background.type.
+  // "Normal" and "Image" are the original behaviour; "Transparent" is real
+  // alpha for a compositing overlay; "Chroma key" paints a flat key colour for
+  // capture paths that cannot carry alpha.
+  var BG_MODES = [
+    { key: "color", label: "Normal" },
+    { key: "image", label: "Image" },
+    { key: "transparent", label: "Transparent" },
+    { key: "chroma", label: "Chroma key" }
+  ];
 
   function renderStyle() {
     var st = JSON.parse(JSON.stringify(stateStyles()));
     var bgType = st.background && st.background.type;
+    // A room saved before these modes existed always has type color/image.
+    if (!bgType) bgType = "color";
+    if (bgType === "transparent" || bgType === "chroma") {
+      // These kinds carry no blur; make sure a stale key cannot travel.
+      delete st.background.blur;
+    }
 
     function optFont(key) {
       var fam = FONTS[key];
@@ -1391,10 +1439,29 @@
         seg("stShadow", [["auto", SHADOW_LABELS.auto], ["off", SHADOW_LABELS.off], ["strong", SHADOW_LABELS.strong]], st.shadow || "auto", "sh") +
       "</div></div>" +
       '<button class="cc-btn cc-btn--ghost cc-btn--block" id="stReset">Reset text style</button>' +
-      '<div class="cc-field"><label>Background color</label><div class="cc-bg-colors" id="stBgColors">' + swatches + "</div></div>" +
-      '<div class="cc-field"><label>Or background image</label><div class="cc-bg-images" id="stBgImages"></div></div>' +
+
+      // --- Background mode ------------------------------------------------
+      // Four explicit kinds, matching the server's styles.background.type.
+      // "Normal" and "Image" behave exactly as they always have; the last two
+      // are for using the wall as a compositing source.
+      '<div class="cc-field"><label>Background mode</label><div class="cc-size-seg cc-size-seg--4" id="stBgMode">' +
+        BG_MODES.map(function (m) {
+          return '<button class="cc-btn' + (bgType === m.key ? " active" : "") + '" data-bgmode="' + m.key + '">' + m.label + "</button>";
+        }).join("") +
+      "</div></div>" +
+      '<div class="cc-warn" id="stAlphaWarn" style="display:none"></div>' +
+      '<div class="cc-field" id="stBgColorsWrap"><label>Background color</label><div class="cc-bg-colors" id="stBgColors">' + swatches + "</div></div>" +
+      '<div class="cc-field" id="stBgImagesWrap"><label>Or background image</label><div class="cc-bg-images" id="stBgImages"></div></div>' +
+      '<div class="cc-field" id="stChromaWrap"><label>Chroma key color</label>' +
+        '<div class="cc-color-row" id="stChroma">' +
+        CHROMA_PRESETS.map(function (hex) {
+          return '<button class="cc-color-swatch' + ((st.background.value || CHROMA_DEFAULT_COLOR).toLowerCase() === hex ? " active" : "") +
+            '" data-chroma="' + hex + '" style="background:' + hex + '"></button>';
+        }).join("") +
+        '<label class="cc-custom-color"><input type="color" id="stChromaCustom" value="' + ((st.background.value || CHROMA_DEFAULT_COLOR).toLowerCase()) + '"><span>Custom</span></label>' +
+        "</div></div>" +
       '<div class="cc-field" id="stBlurWrap"><label>Background image blur</label><div class="cc-size-seg" id="stBlur">' +
-        ['off', 'soft', 'strong'].map(function (b) {
+        ["off", "soft", "strong"].map(function (b) {
           return '<button class="cc-btn' + ((st.background.blur || "off") === b ? " active" : "") + '" data-blur="' + b + '">' + BLUR_LABELS[b] + "</button>";
         }).join("") +
       "</div></div>" +
@@ -1410,7 +1477,11 @@
     function updateContrast() {
       var warn = el("stTxtWarn");
       if (!warn) return;
-      if (st.textColor && st.background.type !== "image" && st.background.value) {
+      // Contrast against a wall colour is meaningful; against an image, a
+      // chroma key or "nothing at all" there is no background to measure, so
+      // the check is skipped rather than guessing.
+      var measurable = st.background.type === "color";
+      if (st.textColor && measurable && st.background.value) {
         var c = contrast(st.textColor, st.background.value);
         if (c < 4.5) {
           warn.textContent = "Low contrast — hard to read on this background (" + c.toFixed(2) + ":1).";
@@ -1450,21 +1521,91 @@
       updateContrast();
     }
 
+    // Shows only the controls that apply to the selected background mode, so the
+    // operator never sees an image blur slider while in chroma mode.
     function paintSwatches() {
-      el("stBgColors").querySelectorAll("[data-bg-color]").forEach(function (b) {
-        b.classList.toggle("active", st.background.type === "color" && st.background.value === b.dataset.bgColor);
+      var type = st.background.type;
+      var isColor = type === "color";
+      var isImage = type === "image";
+      var isChroma = type === "chroma";
+      var isTransparent = type === "transparent";
+
+      el("stBgMode").querySelectorAll("[data-bgmode]").forEach(function (b) {
+        b.classList.toggle("active", b.dataset.bgmode === type);
       });
-      el("stBgImages").querySelectorAll("[data-bg-url]").forEach(function (b) {
-        b.classList.toggle("active", st.background.type === "image" && st.background.value === b.dataset.bgUrl);
-      });
+
+      el("stBgColorsWrap").style.display = isColor ? "" : "none";
+      el("stBgImagesWrap").style.display = isImage ? "" : "none";
+      el("stChromaWrap").style.display = isChroma ? "" : "none";
       var blurWrap = el("stBlurWrap");
       if (blurWrap) {
-        blurWrap.style.display = st.background.type === "image" ? "" : "none";
+        blurWrap.style.display = isImage ? "" : "none";
         el("stBlur").querySelectorAll("[data-blur]").forEach(function (b) {
           b.classList.toggle("active", (st.background.blur || "off") === b.dataset.blur);
         });
       }
+      el("stBgColors").querySelectorAll("[data-bg-color]").forEach(function (b) {
+        b.classList.toggle("active", isColor && st.background.value === b.dataset.bgColor);
+      });
+      el("stBgImages").querySelectorAll("[data-bg-url]").forEach(function (b) {
+        b.classList.toggle("active", isImage && st.background.value === b.dataset.bgUrl);
+      });
+      var chromaValue = (st.background.value || CHROMA_DEFAULT_COLOR).toLowerCase();
+      el("stChroma").querySelectorAll("[data-chroma]").forEach(function (b) {
+        b.classList.toggle("active", b.dataset.chroma === chromaValue);
+      });
+      el("stChromaCustom").value = chromaValue;
+
+      // Say plainly what transparent mode will and will not do. The wall really
+      // does become see-through, but whether that alpha survives into vMix
+      // depends on how vMix captures the browser — a screen/window capture has
+      // no alpha channel at all, which is what chroma mode exists for.
+      var warn = el("stAlphaWarn");
+      if (warn) {
+        warn.style.display = "";
+        warn.textContent = isTransparent
+          ? "Transparent: the wall shows nothing behind the text. Use /display/ROOM?bg=transparent as a vMix Browser source. If your vMix capture flattens alpha to black, use Chroma key instead."
+          : isChroma
+            ? "Chroma key: the wall is painted a flat " + chromaValue.toUpperCase() + ". Key that colour out in vMix or OBS to composite it over video."
+            : "";
+        warn.style.display = warn.textContent ? "" : "none";
+      }
     }
+
+    // Switching mode keeps whatever the operator had already chosen for the
+    // other kinds, so flipping back and forth is lossless.
+    el("stBgMode").querySelectorAll("[data-bgmode]").forEach(function (b) {
+      b.onclick = function () {
+        var next = b.dataset.bgmode;
+        if (next === st.background.type) return;
+        if (next === "transparent") {
+          st.background = { type: "transparent" };
+        } else if (next === "chroma") {
+          st.background = { type: "chroma", value: st.background.value || CHROMA_DEFAULT_COLOR };
+        } else if (next === "image") {
+          var first = el("stBgImages").querySelector("[data-bg-url]");
+          st.background = {
+            type: "image",
+            value: first ? first.dataset.bgUrl : "",
+            blur: st.background.blur || "off"
+          };
+        } else {
+          st.background = { type: "color", value: st.background.value || BG_COLORS[0] };
+        }
+        repaint();
+      };
+    });
+
+    el("stChroma").querySelectorAll("[data-chroma]").forEach(function (b) {
+      b.onclick = function () {
+        st.background = { type: "chroma", value: b.dataset.chroma };
+        repaint();
+      };
+    });
+    el("stChromaCustom").oninput = function () {
+      st.background = { type: "chroma", value: el("stChromaCustom").value.toLowerCase() };
+      repaint();
+    };
 
     el("stFont").onchange = function () { st.font = el("stFont").value; repaint(); };
     el("stSizeSlider").oninput = function () { st.size = (parseInt(el("stSizeSlider").value, 10)) / 100; repaint(); };

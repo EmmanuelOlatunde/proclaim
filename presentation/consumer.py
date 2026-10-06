@@ -44,13 +44,30 @@ State shape
   "slideCount": 1,
 "blank": false,
    "countdown": { "endTime": <ms>, "title": "..." } | null,
-   "styles": { "font": "default"|"serif"|"sans",
+"styles": { "font": "default"|"serif"|"sans",
                "size": "sm"|"md"|"lg",
                "background": {"type": "color", "value": "#05070A"} |
-                              {"type": "image", "value": "/media/..."} },
+                              {"type": "image", "value": "/media/...",
+                               "blur": "off"|"soft"|"strong"} |
+                              {"type": "transparent"} |
+                              {"type": "chroma", "value": "#00FF00"} },
+               "textColor", "referenceColor", "bold", "lineSpacing",
+               "align", "shadow"   /* optional; absent = CSS default */ },
    "translation": "world_english_bible",
    "queueIndex": -1
-}
+ }
+
+"background.type" chooses what is painted behind the slide:
+
+  "color"        a solid colour (the original behaviour, unchanged)
+  "image"        a slide background image, optionally using a pre-blurred variant
+  "transparent"  nothing at all — the page really is see-through, so the display
+                 can be used as a compositing/overlay source
+  "chroma"       a solid key colour, the fallback for capture paths that cannot
+                 carry an alpha channel (vMix screen/window capture, OBS)
+
+Transparency never fakes itself with a colour: see presentation.css and
+README.md for exactly which elements each mode clears.
 
 "translation" is the full-name-slug id of the active Scripture translation
 (default: "king_james_version"), persisted in room state like "styles".
@@ -69,6 +86,7 @@ Style messages
 import time
 import json
 import re
+import threading
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from asgiref.sync import sync_to_async
 from .models import Room, QueueItem, Song, SongSection, Announcement, ImageItem
@@ -92,6 +110,24 @@ DEFAULT_STYLES = {
 # the override and returns to that built-in default.
 OPTIONAL_STYLE_FIELDS = ("textColor", "referenceColor", "bold", "lineSpacing", "align", "shadow")
 
+# Background kinds. "color" and "image" are the original two and behave
+# exactly as before. "transparent" makes the whole page genuinely see-through
+# so the display can be used as a vMix overlay source; "chroma" paints a solid
+# key colour instead, which is the honest fallback when the capture path cannot
+# carry an alpha channel (see README.md, "Transparent display mode").
+STYLE_BACKGROUND_TYPES = ("color", "image", "transparent", "chroma")
+CHROMA_DEFAULT_COLOR = "#00FF00"
+
+# Who is currently connected to each room, so the Connect panel can tell the
+# operator whether the phone is actually talking to Proclaim.
+#
+# Daphne runs as a single process and the channel layer is already the
+# in-memory backend (settings.CHANNEL_LAYERS), so a process-local registry is
+# consistent with the existing architecture — no database, no extra traffic.
+# The lock guards a handful of dict operations.
+_PRESENCE_LOCK = threading.Lock()
+_PRESENCE = {}
+
 
 def _valid_size(value):
     """A size is either a named preset or a number in [0.6, 1.6] rounded to a 0.05 step."""
@@ -106,17 +142,93 @@ def _valid_size(value):
     return None
 
 
+def _presence_add(room_code, role, channel_name):
+    with _PRESENCE_LOCK:
+        _PRESENCE.setdefault(room_code, {"control": set(), "display": set()}).setdefault(
+            role, set()
+        ).add(channel_name)
+
+
+def _presence_remove(room_code, role, channel_name):
+    with _PRESENCE_LOCK:
+        entry = _PRESENCE.get(room_code)
+        if not entry:
+            return
+        entry.get(role, set()).discard(channel_name)
+        if not any(entry.values()):
+            _PRESENCE.pop(room_code, None)
+
+
+def presence(room_code):
+    """How many controllers / displays are connected to a room right now."""
+    with _PRESENCE_LOCK:
+        entry = _PRESENCE.get(room_code) or {}
+        return {
+            "control": len(entry.get("control", ())),
+            "display": len(entry.get("display", ())),
+        }
+
+
+def rooms_with_controller():
+    """Room codes that currently have at least one phone controller attached."""
+    with _PRESENCE_LOCK:
+        return sorted(
+            code for code, entry in _PRESENCE.items() if entry.get("control")
+        )
+
+
+def normalize_background(bg):
+    """Validate a styles.background payload, or return None to leave it alone.
+
+    "color" / "image" behave exactly as they always have. "transparent" takes
+    no value. "chroma" takes a hex key colour and falls back to pure green
+    rather than accepting anything unparseable — a bad value must never paint
+    an unreadable background over the wall.
+    """
+    if not isinstance(bg, dict):
+        return None
+    btype = bg.get("type")
+    if btype not in STYLE_BACKGROUND_TYPES:
+        return None
+    if btype == "transparent":
+        return {"type": "transparent"}
+    if btype == "chroma":
+        value = bg.get("value")
+        if not (isinstance(value, str) and STYLE_HEX_RE.match(value)):
+            value = CHROMA_DEFAULT_COLOR
+        return {"type": "chroma", "value": value.lower()}
+    if not bg.get("value"):
+        return None
+    out = {"type": btype, "value": str(bg["value"])}
+    if btype == "image":
+        # Blur level selects which PRE-BLURRED variant the display
+        # loads (no runtime CSS filter). Anything else means "off".
+        blur = str(bg.get("blur") or "off").lower()
+        out["blur"] = blur if blur in ("off", "soft", "strong") else "off"
+    return out
+
+
 class RoomConsumer(AsyncJsonWebsocketConsumer):
+    def __init__(self, *args, **kwargs):
+        # The controller connects on a separate route (/ws/control/<room>/) so
+        # the Connect panel can show "phone connected". Displays keep using
+        # /ws/room/<room>/, so existing display URLs are unaffected and the
+        # message protocol is unchanged.
+        self.role = kwargs.pop("role", "display")
+        super().__init__(*args, **kwargs)
+
     async def connect(self):
         self.room_code = self.scope["url_route"]["kwargs"]["room_code"]
         self.group = f"room_{self.room_code}"
         await self.channel_layer.group_add(self.group, self.channel_name)
         await self.accept()
+        _presence_add(self.room_code, self.role, self.channel_name)
         # Send current state on connect (reconnection / late display / late operator)
         state = await self.get_room_state()
         await self.send_json({"type": "state", "state": state})
 
     async def disconnect(self, close_code):
+        _presence_remove(self.room_code, self.role, self.channel_name)
         await self.channel_layer.group_discard(self.group, self.channel_name)
 
     async def receive_json(self, data):
@@ -360,14 +472,10 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
         size = _valid_size(styles.get("size"))
         if size is not None:
             cur["size"] = size
-        bg = styles.get("background")
-        if isinstance(bg, dict) and bg.get("type") in ("color", "image") and bg.get("value"):
-            cur["background"] = {"type": bg["type"], "value": str(bg["value"])}
-            if bg["type"] == "image":
-                # Blur level selects which PRE-BLURRED variant the display
-                # loads (no runtime CSS filter). Anything else means "off".
-                blur = str(bg.get("blur") or "off").lower()
-                cur["background"]["blur"] = blur if blur in ("off", "soft", "strong") else "off"
+        if "background" in styles:
+            background = normalize_background(styles["background"])
+            if background is not None:
+                cur["background"] = background
         for field in OPTIONAL_STYLE_FIELDS:
             if field in styles:
                 self._apply_optional_style(cur, field, styles[field])

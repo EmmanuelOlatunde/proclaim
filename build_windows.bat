@@ -21,7 +21,10 @@ if not exist "%BUILD_VENV%\Scripts\python.exe" (
 if errorlevel 1 goto :error
 
 echo [2/6] Installing application dependencies into build_venv...
-"%BUILD_VENV%\Scripts\python.exe" -m pip install --quiet Django channels daphne Pillow
+rem segno renders the connection QR codes offline (pure-Python PNG writer) and
+rem psutil ranks usable network interfaces. Both are imported at runtime by
+rem presentation/netinfo.py, so PyInstaller cannot work without them here.
+"%BUILD_VENV%\Scripts\python.exe" -m pip install --quiet Django channels daphne Pillow segno psutil
 if errorlevel 1 goto :error
 
 echo [3/6] Installing PyInstaller...

@@ -406,63 +406,38 @@ input, textarea { font-family: inherit; }
   overflow: hidden;
 }
 .cc-mini-preview--lg { max-width: 440px; margin: 0 auto; }
+
+/* The thumbnail surface. It opts into the shared presentation design system
+   (presentation.css) the same way the wall does — the only change is
+   --pres-em, which turns viewport-relative projector sizes into thumbnail
+   pixel sizes. Everything else (font, colour, weight, line height,
+   alignment, spacing, shadow, and the per-role scale) comes from the same
+   tokens, so this cannot drift away from the real display. */
 .cc-mini-preview__inner {
   position: absolute; top: 0; left: 0; right: 0; bottom: 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 8px;
-  text-align: var(--d-align, center);
-  padding: 6% 8%;
-  font-family: var(--d-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+  --pres-em: 15px;
+  --pres-measure: 88%;
+  --pres-gap: 8px;
+  --pres-gap-sm: 5px;
+  --pres-gap-timer: 7px;
+  --pres-line-height: 1.5;
+  text-shadow: var(--d-shadow, none);
   border-radius: 12px;
 }
-.cc-mini-preview__inner {
-  text-shadow: var(--d-shadow, none);
-}
+.cc-mini-preview__inner .d-slide { width: 100%; }
 .cc-mini-preview__inner .cc-empty { margin: 0; }
 
-.cc-mini__song-label {
-  font-size: calc(10px * var(--d-mult, 1));
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.2em;
-  color: #6B7A8F;
-}
-.cc-mini__ref {
-  font-size: calc(15px * var(--d-mult, 1));
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--d-ref-color, #FFFFFF);
-}
-.cc-mini__title {
-  font-size: calc(22px * var(--d-mult, 1));
-  font-weight: 700;
-  color: var(--d-ref-color, #FFFFFF);
-  line-height: 1.2;
-}
-.cc-mini__text {
-  font-size: calc(15px * var(--d-mult, 1));
-  font-weight: var(--d-weight, 400);
-  line-height: var(--d-line, 1.55);
-  color: var(--d-color, #E8ECF1);
-  max-width: 88%;
-  white-space: pre-wrap;
-}
-.cc-mini__image { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
-.cc-mini__image img { width: 100%; height: 100%; object-fit: contain; }
-.cc-mini__countdown-label {
-  font-size: calc(11px * var(--d-mult, 1));
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.3em;
-  color: #9AA6B2;
-}
-.cc-mini__countdown {
-  font-size: calc(44px * var(--d-mult, 1));
-  font-weight: 700;
-  color: var(--d-color, #FFFFFF);
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
+/* Transparent-mode stand-in. The control page is never actually see-through —
+   this checkerboard is how "the wall is showing nothing here" is shown, so the
+   operator can tell a transparent display from a black one. */
+.cc-transparent {
+  background-color: #05070A !important;
+  background-image:
+    linear-gradient(45deg, #1E2A38 25%, transparent 25%, transparent 75%, #1E2A38 75%),
+    linear-gradient(45deg, #1E2A38 25%, transparent 25%, transparent 75%, #1E2A38 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 9px 9px;
 }
 
 /* Background color swatches */
@@ -497,6 +472,10 @@ input, textarea { font-family: inherit; }
 
 /* Text size segmented control */
 .cc-size-seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+/* Four-option variant (Background mode: Normal / Image / Transparent / Chroma).
+   2x2 on a phone — four cramped labels side by side are unreadable at the
+   thumb-sized width the control page is actually used at. */
+.cc-size-seg--4 { grid-template-columns: repeat(2, 1fr); }
 .cc-size-seg .cc-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
 
 /* Text style controls */
@@ -673,10 +652,13 @@ input, textarea { font-family: inherit; }
 /* ============================================================
    Shared image fit stage — mirror of display.css (.d-image).
    The control-side mini preview uses these same classes so it
-   renders byte-for-byte like the wall display. The pre-blurred
-   strong variant is the backdrop; no runtime blur is applied.
+   renders like the wall display. The pre-blurred strong variant
+   is the backdrop; no runtime blur is applied.
+
+   background is --d-figure-bg, exactly as on the wall, so the
+   letterbox follows the same background mode the display is in.
    ============================================================ */
-.d-image { position: relative; width: 100%; height: 100%; overflow: hidden; background: #000; }
+.d-image { position: relative; width: 100%; height: 100%; overflow: hidden; background: var(--d-figure-bg, #000); }
 .d-image__backdrop { position: absolute; inset: 0; }
 .d-image__backdrop img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .d-image__front { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }

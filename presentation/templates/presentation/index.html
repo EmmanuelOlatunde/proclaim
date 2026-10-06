@@ -4,15 +4,82 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ChurchCast — Local Presentation Control</title>
+<title>Proclaim — Local Presentation Control</title>
 <link rel="stylesheet" href="{% staticver 'presentation/css/app.css' %}">
+<link rel="stylesheet" href="{% staticver 'presentation/css/net.css' %}">
 </head>
 <body class="cc-index">
 <div class="cc-index__wrap">
-  <div class="cc-index__logo">ChurchCast</div>
-  <p class="cc-index__tag">Local LAN presentation control</p>
 
-  <div class="cc-index__card">
+  <div class="cc-index__logo">Proclaim</div>
+  <p class="cc-index__tag">Local church presentation — no internet needed</p>
+
+  <!-- ============================================================
+       CONNECT YOUR PHONE
+       The operator's whole problem is typing a LAN address into a
+       phone. Everything below is computed on this laptop: the QR
+       code is generated locally, the URLs are this machine's own
+       addresses, and the status reflects the live WebSocket.
+       ============================================================ -->
+  <div class="cc-card cc-connect" id="connectCard">
+    <h2>Connect your phone</h2>
+
+    <ol class="cc-connect__steps">
+      <li>On the phone, turn on <strong>Personal Hotspot</strong> (or join the same Wi-Fi router as this laptop).</li>
+      <li>Connect this laptop to that hotspot and wait for Windows to show it as connected.</li>
+      <li>Open the phone's camera on the code below and tap the link — or type the address.</li>
+    </ol>
+
+    <div class="cc-connect__grid">
+      <div class="cc-connect__qr">
+        <img src="/api/network/qr?index=0" alt="QR code: {{ network.primaryUrl }}"
+             width="220" height="220" id="qrImage">
+        <div class="cc-connect__qrlab" id="qrLabel">{{ network.primaryUrl }}</div>
+      </div>
+
+      <div class="cc-connect__addrs">
+        <div class="cc-connect__status" id="netStatus">
+          <span class="cc-dot" id="netDot"></span>
+          <span id="netStatusText">Waiting for a controller…</span>
+        </div>
+
+        <div class="cc-connect__hint">
+          Every address below reaches this same Proclaim server. Use the one on the
+          network your phone is actually on.
+        </div>
+
+        <ul class="cc-connect__list" id="netList">
+          {% for option in network.urls %}
+            <li class="cc-addr{% if option.likely %} cc-addr--primary{% endif %}">
+              <a class="cc-addr__url" href="{{ option.url }}">{{ option.url }}</a>
+              <span class="cc-addr__label">{{ option.label }}</span>
+              {% if option.note %}<span class="cc-addr__note">{{ option.note }}</span>{% endif %}
+            </li>
+          {% empty %}
+            <li class="cc-addr cc-addr--warn">
+              <span class="cc-addr__url">No network address found</span>
+              <span class="cc-addr__label">Connect this laptop to Wi-Fi or a phone hotspot, then reload.</span>
+            </li>
+          {% endfor %}
+        </ul>
+
+        <div class="cc-connect__firewall">
+          <strong>Phone cannot connect?</strong>
+          <p>{{ network.firewallHint }}</p>
+          <code>{{ network.netshCommand|safe }}</code>
+          <button class="cc-btn cc-btn--ghost cc-btn--sm" id="firewallBtn" type="button">
+            Open Windows Firewall settings
+          </button>
+          <p class="cc-connect__small">
+            Server bound to <code>{{ network.bind }}:{{ network.port }}</code> so other devices
+            on the network can reach it. Nothing is sent to the internet.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cc-card">
     <h2>Control (Phone)</h2>
     <form action="/control" method="get" class="cc-index__form">
       <input name="room" placeholder="Room code (e.g. CHURCH1)" value="CHURCH1" class="cc-input">
@@ -20,11 +87,20 @@
     </form>
   </div>
 
-  <div class="cc-index__card">
+  <div class="cc-card">
     <h2>Display (Laptop / vMix)</h2>
     <div class="cc-index__rooms">
       {% for room in rooms %}
-        <a href="/display/{{ room.code }}" class="cc-index__room-link">/display/{{ room.code }}</a>
+        {% comment %}
+          data-room lets net.js refresh this row's indicator without a reload,
+          so a page left open while the phone connects or drops stays honest.
+        {% endcomment %}
+        <div class="cc-roomrow" data-room="{{ room.code }}">
+          <a href="/display/{{ room.code }}" class="cc-index__room-link">/display/{{ room.code }}</a>
+          <span class="cc-presence{% if room.code in connected_rooms %} cc-presence--on{% endif %}">
+            {% if room.code in connected_rooms %}● phone connected{% else %}○ no controller{% endif %}
+          </span>
+        </div>
       {% empty %}
         <p class="cc-index__hint">No rooms yet. Open control to create one.</p>
       {% endfor %}
@@ -33,12 +109,13 @@
       <input name="room" placeholder="Room code (e.g. CHURCH1)" value="CHURCH1" class="cc-input">
       <button type="submit" class="cc-btn">Open Display</button>
     </form>
+    <div class="cc-index__hint" style="margin-top:10px">
+      Need a transparent browser source for vMix? Open
+      <code>/display/CHURCH1?bg=transparent</code> and add that URL as a Browser source.
+    </div>
   </div>
 
-  <div class="cc-index__card">
-    <h2>Start a new room</h2>
-    <p class="cc-index__hint">Enter a code and open the display — the room is created automatically.</p>
-  </div>
 </div>
+<script src="{% staticver 'presentation/js/net.js' %}"></script>
 </body>
 </html>

@@ -1,5 +1,31 @@
 /* ============================================================
-   ChurchCast — Display canvas (pure 16:9, no chrome)
+   Proclaim — display surface (the wall / vMix browser source)
+   ------------------------------------------------------------
+   Structure only. All projected typography lives in
+   presentation.css (the shared design system), which is loaded
+   before this file.
+
+   Background model
+   ----------------
+   Every opaque surface in this file is driven by one variable,
+   --d-page-bg. Nothing paints a colour of its own:
+
+     html, body, #display   -> var(--d-page-bg)
+     .d-stage.blank         -> var(--d-blank-bg)
+     .d-image (letterbox)   -> var(--d-figure-bg)
+
+   display.js sets those three from the room's background style:
+
+     color       --d-page-bg: <chosen colour>   (unchanged behaviour)
+     image       --d-page-bg: <chosen colour>, image painted on #display
+     transparent --d-page-bg: transparent, --d-blank-bg: transparent,
+                  --d-figure-bg: transparent   <- real alpha, all the way up
+     chroma      --d-page-bg: <key colour>, and the same colour for the
+                  blank and figure backgrounds, so the whole frame is one
+                  flat key colour that a compositor can key out
+
+   Defaults below are the normal opaque presentation, byte-for-byte the
+   look this app has always had.
    ============================================================ */
 
 :root {
@@ -12,15 +38,23 @@
   --d-ref-color: ;
   --d-weight: ;
   --d-line: ;
-  --d-align: ;
   --d-shadow: ;
+
+  /* Painted surfaces. Reassigned by display.js; these are the normal-mode
+     values, so the page is fully opaque before any style arrives. */
+  --d-page-bg: #05070A;
+  --d-blank-bg: #000;
+  --d-figure-bg: #000;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* In transparent mode html/body must both be transparent: a browser
+   promotes the body's background to the canvas whenever <html> has none,
+   so clearing only one of them would leave an opaque page. */
 html, body {
   width: 100%; height: 100%;
-  background: #05070A;
+  background: var(--d-page-bg);
   overflow: hidden;
   -webkit-text-size-adjust: 100%;
   user-select: none;
@@ -32,7 +66,7 @@ html, body {
 #display {
   width: 100vw; height: 100vh;
   display: flex; align-items: center; justify-content: center;
-  background: #05070A;
+  background: var(--d-page-bg);
 }
 
 .d-stage {
@@ -41,106 +75,59 @@ html, body {
   position: relative;
 }
 
-.d-stage.blank { background: #000 !important; }
+/* Blanking hides the content; in transparent mode the frame itself stays
+   see-through rather than flashing an opaque rectangle over the program. */
+.d-stage.blank { background: var(--d-blank-bg) !important; }
 .d-stage.blank .d-content { display: none; }
 
+/* The slide box. Alignment comes from the design-system token, which the
+   operator's Style panel sets; colour and shadow likewise. The projected
+   typography itself lives in presentation.css (.d-slide and roles). */
 .d-content {
-  text-align: var(--d-align, center);
+  text-align: var(--pres-text-align, center);
   max-width: 85%;
   max-height: 92%;
   color: var(--d-color, #F5F7FA);
   text-shadow: var(--d-shadow, none);
 }
 
-/* --- element sizes are scaled by the operator's Text size setting (--d-mult)
-       and the display's auto fit-to-stage scale (--d-fit, min 60%) --- */
-
-/* Scripture */
-.d-scripture { display: flex; flex-direction: column; align-items: center; gap: 2vw; }
-.d-scripture__ref {
-  font-size: calc(clamp(2.5vw, 4.5vw, 4.2vw) * var(--d-mult) * var(--d-fit, 1));
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: var(--d-ref-color, #FFFFFF);
-  text-transform: uppercase;
-}
-.d-scripture__text {
-  font-size: calc(clamp(2vw, 3.4vw, 3.2vw) * var(--d-mult) * var(--d-fit, 1));
-  font-weight: var(--d-weight, 400);
-  line-height: var(--d-line, 1.65);
-  color: var(--d-color, #E8ECF1);
-  max-width: 76vw;
-  white-space: pre-wrap;
-}
-
-/* Songs */
-.d-song { display: flex; flex-direction: column; align-items: center; gap: 1vw; }
-.d-song__label {
-  font-size: calc(clamp(0.9vw, 1.4vw, 1.5vw) * var(--d-mult));
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.2em;
-  color: #6B7A8F;
-  margin-bottom: 0.5vw;
-}
-.d-song__text {
-  font-size: calc(clamp(2.2vw, 4vw, 3.8vw) * var(--d-mult) * var(--d-fit, 1));
-  font-weight: var(--d-weight, 500);
-  line-height: var(--d-line, 1.5);
-  color: var(--d-color, #F5F7FA);
-  white-space: pre-wrap;
-  max-width: 75vw;
-}
-
-/* Announcements */
-.d-announcement { display: flex; flex-direction: column; align-items: center; gap: 2vw; }
-.d-announcement__title {
-  font-size: calc(clamp(3vw, 5.5vw, 5vw) * var(--d-mult));
-  font-weight: 700;
-  color: var(--d-ref-color, #FFFFFF);
-  line-height: 1.2;
-}
-.d-announcement__body {
-  font-size: calc(clamp(1.8vw, 3vw, 2.8vw) * var(--d-mult));
-  font-weight: var(--d-weight, 400);
-  line-height: var(--d-line, 1.6);
-  color: var(--d-color, #C8D0DA);
-  max-width: 70vw;
-  white-space: pre-wrap;
-}
-
-/* Images — shared fit stage. Keep these selectors byte-identical with the
+/* --- Images — shared fit stage. Keep these selectors byte-identical with the
    .d-image block in app.css so the control-side mini preview matches the
    wall exactly (blur/contain/cover). No runtime blur is ever applied: the
-   backdrop is the pre-blurred strong variant, served as a normal file. */
+   backdrop is the pre-blurred strong variant, served as a normal file.
+
+   background is var(--d-figure-bg) so letterbox bars follow the display's
+   background mode: black normally, fully transparent in transparent mode
+   (so a PNG that carries its own alpha composites over the video underneath
+   instead of sitting in an opaque frame), and the key colour in chroma mode.
+   The pipeline is untouched — images are never re-encoded to flatten alpha. */
 .d-content.d-image-stage { max-width: 100%; max-height: 100%; width: 100%; height: 100%; }
-.d-image { position: relative; width: 100%; height: 100%; overflow: hidden; background: #000; }
+.d-image { position: relative; width: 100%; height: 100%; overflow: hidden; background: var(--d-figure-bg); }
 .d-image__backdrop { position: absolute; inset: 0; }
 .d-image__backdrop img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .d-image__front { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .d-image--cover .d-image__front { object-fit: cover; }
 
-/* Countdown */
-.d-countdown { display: flex; flex-direction: column; align-items: center; gap: 1.5vw; }
-.d-countdown__label {
-  font-size: calc(clamp(1.5vw, 2.5vw, 2.2vw) * var(--d-mult));
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.3em;
-  color: #9AA6B2;
-}
-.d-countdown__time {
-  font-size: calc(clamp(6vw, 12vw, 10vw) * var(--d-mult));
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--d-color, #FFFFFF);
-  line-height: 1;
-}
-.d-countdown__time.done { color: #22C55E; }
-
-/* Placeholder */
+/* --- Placeholder: nothing presented yet. */
 .d-placeholder {
   font-size: 1.5vw;
   color: #34445A;
   text-align: center;
 }
+
+/* ============================================================
+   Transparent / chroma frame modes
+   ------------------------------------------------------------
+   Set by display.js as a class on <html> so the whole surface
+   switches together. Everything visible above already reads from
+   --d-page-bg / --d-blank-bg / --d-figure-bg; these rules exist so
+   that the frame cannot paint anything of its own.
+
+   Text legibility over arbitrary video is handled where it belongs:
+   display.js keeps the operator's shadow setting, and "Automatic"
+   already resolves to a dark shadow for light text — which is exactly
+   what is needed over an unknown background. No stroke, panel or
+   scrim is added, so the overlay stays clean.
+   ============================================================ */
+.d-transparent #display,
+.d-transparent .d-stage { background: transparent; }

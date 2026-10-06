@@ -1,0 +1,131 @@
+/* ============================================================
+   Proclaim — Connect panel (laptop landing page only)
+
+   This file styles the operator's *setup* screen on the laptop. It
+   is never loaded by the control page or the display, so nothing in
+   it can leak into the controller (phone) layout or the projected
+   wall. Only .cc-card / .cc-connect / .cc-addr / .cc-dot / .cc-roomrow
+   / .cc-presence are defined here, and they all sit under the
+   .cc-index body class as well as standing alone, so the rules stay
+   scoped to this page.
+   ============================================================ */
+
+.cc-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+/* --- Connect panel --- */
+.cc-connect h2 { margin-bottom: 10px; }
+.cc-connect__steps {
+  margin: 0 0 16px;
+  padding-left: 20px;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.cc-connect__steps strong { color: var(--text); }
+.cc-connect__grid {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 560px) {
+  .cc-connect__grid { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+}
+
+.cc-connect__qr { text-align: center; }
+.cc-connect__qr img {
+  background: #fff;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  /* Nearest-neighbour keeps the modules crisp at any zoom, which matters
+     when the operator holds the laptop at an angle to the phone camera. */
+  image-rendering: pixelated;
+}
+.cc-connect__qrlab {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-2);
+  word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.cc-connect__addrs { min-width: 0; }
+
+/* Status: waiting for the phone vs. phone connected. */
+.cc-connect__status {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600;
+  margin-bottom: 10px;
+}
+.cc-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--danger);
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.cc-dot.on { background: var(--success); box-shadow: 0 0 6px rgba(34,197,94,0.6); }
+
+.cc-connect__hint { font-size: 12px; color: var(--text-2); line-height: 1.5; margin-bottom: 10px; }
+
+.cc-connect__list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.cc-addr {
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+.cc-addr--primary { border-color: var(--accent); }
+.cc-addr--warn { border-color: var(--warning); }
+.cc-addr__url {
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.cc-addr--warn .cc-addr__url { color: var(--warning); }
+.cc-addr__label { font-size: 11px; color: var(--text-2); }
+.cc-addr__note { font-size: 10px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; }
+
+.cc-connect__firewall {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.cc-connect__firewall strong { color: var(--text); }
+.cc-connect__firewall p { margin: 6px 0; }
+.cc-connect__firewall code {
+  display: block;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 11px;
+  color: var(--text);
+  word-break: break-all;
+  user-select: all;
+}
+.cc-connect__small { font-size: 11px; }
+.cc-btn--sm { min-height: 34px; padding: 6px 12px; font-size: 12px; margin-top: 8px; }
+
+/* --- Room rows on the landing page --- */
+.cc-roomrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cc-roomrow .cc-index__room-link { flex: 1; min-width: 0; }
+.cc-presence {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.cc-presence--on { color: var(--success); }

@@ -53,19 +53,28 @@ There are **two ways to get Proclaim**:
 # Linux/macOS/most dev machines
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install Django channels daphne Pillow
+pip install Django channels daphne Pillow segno psutil
 
 ./start.sh
 # or: python manage.py runserver 0.0.0.0:3000 --noreload
 ```
 
+`segno` renders the connection QR codes entirely offline (pure Python, its own PNG writer) and
+`psutil` ranks the usable network interfaces. Neither is optional in practice: without `segno`
+the QR code is unavailable, and without `psutil` the Connect panel falls back to stdlib
+enumeration, which still works but cannot name interfaces or demote virtual adapters.
+
 Then:
-- On the **phone**: open `http://LAPTOP-IP:3000/control`
+- On the **laptop**: open `http://127.0.0.1:3000/` — the home page lists every usable LAN
+  address with a scannable QR code
+- On the **phone**: scan the QR code, or open the shown `http://LAPTOP-IP:3000/control`
 - On the **laptop**: open `http://LAPTOP-IP:3000/display/CHURCH1`
 - In **vMix**: add the display URL as a Browser source
 
-`start.sh` prints your detected LAN address automatically. Room creation is automatic —
-any room code creates its room on first use.
+See [Connecting a phone](#connecting-a-phone) for Wi-Fi vs hotspot setup, and
+[Transparent display](#transparent-display) for using the wall as a video overlay.
+
+Room creation is automatic — any room code creates its room on first use.
 
 > Note: the Django project package is still named `churchcast` (legacy name); the product is **Proclaim**.
 
@@ -156,6 +165,16 @@ on success. (It will close any running Proclaim.exe first.)
 
 Resolution order: `Proclaim.exe --port N` → `PROCLAIM_PORT` env var → default `3000`.
 
+`portable.py` writes the resolved port back into `PROCLAIM_PORT` before starting Daphne, so
+the console banner, the Connect panel and the QR code can never disagree about which port is
+live. For a request already in flight, the port in `request.META["SERVER_PORT"]` wins — that
+is what the phone will actually dial.
+
+The startup banner lists **every** ranked LAN address (marking which one the QR code uses)
+rather than guessing a single one, because a machine with Wi-Fi *and* Ethernet — or one whose
+phone hotspot lives on a different adapter than the default route — has more than one
+plausible answer. See [Connecting a phone](#connecting-a-phone).
+
 ---
 
 ## Architecture
@@ -189,11 +208,75 @@ PHONE (controller) → Wi-Fi → LAPTOP (server + display) → vMix → projecto
 - **Countdown Timer**: timestamp-synced (no per-second network traffic)
 - **Blank Screen**: black out display while preserving position
 - **Service Queue**: order items, reorder, jump to any item
-- **Style tab**: font (default/serif/sans), text size, and background color/image — mirroring
-  a live preview before you press Send
+- **Style tab**: font (default/serif/sans), text size, alignment, text shadow, and background —
+  mirroring a live preview before you press Send
+- **Background modes** (see [Transparent display](#transparent-display)):
+  Normal (solid colour), Image, Transparent (real alpha in the browser), Chroma key
 - **Live Preview**: the control page shows a 16:9 mini preview of whatever will hit the display
 - **Reconnection**: auto-reconnect WebSocket, state restore on reconnect
 - **Offline**: works without Internet — all data local (SQLite + local filesystem)
+
+---
+
+## Connecting a phone
+
+Two ways, both offline. Proclaim works out the addresses itself and shows them on the
+home page (`http://127.0.0.1:3000/`) — open that page on the laptop.
+
+### Same Wi-Fi (the usual case)
+
+Start Proclaim, open the home page, and scan the QR code with the phone. The address is the
+laptop's Wi-Fi address on the same network. The phone then opens `http://<that-address>:3000/`.
+
+### Phone hotspot (no venue Wi-Fi, no Internet)
+
+The laptop has no Internet requirement at all, which is the point — so a phone hotspot works
+even with no data plan:
+
+1. On the phone: **Settings → Personal hotspot / Tethering → ON**. Note the hotspot's address
+   range (Android usually `192.168.43.x`, iOS `192.168.2.x`, Windows Mobile hotspot
+   `192.168.137.x`).
+2. Connect the laptop's Wi-Fi to that hotspot. **Do not** use Ethernet at the same time — it
+   usually wins the default route, and Proclaim will print *both* addresses so you can pick.
+3. Reload the home page. The hotspot address is now at the top of the list and is what the QR
+   code points at.
+4. Scan. The phone opens the control page.
+
+### Why several addresses are shown
+
+A modern laptop has a dozen IPv4 interfaces — Wi-Fi, Ethernet, Bluetooth, VPN clients,
+Hyper-V/vEthernet, VirtualBox bridges, Docker and WSL veth pairs. "The first non-loopback
+address" is a coin flip, and a VirtualBox or Docker address is frequently the one that gets
+listed first while being completely unreachable from a phone. So every usable address is
+ranked and shown; Wi-Fi and Ethernet come first, virtual adapters last and are labelled
+*"phone will not reach this"*. Nothing is silently discarded — only loopback (`127.x`),
+unspecified (`0.0.0.0`) and link-local (`169.254.x`) are excluded outright, because those can
+never be typed on another device.
+
+The `.local` hostname (`laptop.local`) is listed as a last resort only. mDNS resolution is
+unreliable on Windows and often disabled entirely, so it is never what the QR code points at.
+
+### If the phone still cannot connect
+
+Windows Firewall is the usual cause. The home page prints a ready-to-run rule for **your**
+port:
+
+```powershell
+netsh advfirewall firewall add rule name="Proclaim" dir=in action=allow protocol=TCP localport=3000
+```
+
+Allow on **Private networks only**, and do not disable the firewall. See [Firewall](#firewall)
+for the Linux equivalents.
+
+### Connection status
+
+The home page shows a live dot: grey/red until a controller connects, green once the phone is
+actually talking to Proclaim. It reads an in-memory presence registry, so a green dot means a
+real WebSocket is open — not merely that the server is up.
+
+The controller connects on `/ws/control/<room>/` while displays stay on `/ws/room/<room>/`.
+Both join the same room group and speak the identical protocol; the separate route exists only
+so the Connect panel can tell a phone from a projector. Existing display URLs are unaffected.
 
 ---
 
@@ -212,10 +295,75 @@ Images load once and are cached by the browser.
 
 ---
 
+## Transparent display
+
+Use the wall as a compositing layer over video, instead of an opaque full-screen slide. Two
+modes, chosen in the Style tab's **Background mode** row:
+
+| Mode | What the browser paints | Use when |
+|---|---|---|
+| **Normal** | the chosen solid colour (unchanged default) | the wall is the whole output |
+| **Image** | the chosen background image (unchanged) | decorative backdrop |
+| **Transparent** | nothing — genuine alpha, all the way up | your capture preserves alpha |
+| **Chroma key** | a flat key colour (`#00FF00` by default) | the capture path flattens alpha |
+
+A display can also be pinned per-browser without changing the room:
+`/display/CHURCH1?bg=transparent`. That is what lets a dedicated vMix overlay browser stay
+transparent while the room the congregation is watching stays normal. Unknown values fall back
+to `room`; case and stray whitespace are tolerated, because these URLs get typed by hand.
+
+### The honest caveat about alpha
+
+**A browser can be transparent. A screen capture usually cannot.**
+
+`display.css` really does drive `html`, `body`, `#display`, the blanked stage and an image's
+letterbox bars all to `transparent` — there is no opaque surface left anywhere in the frame.
+That browser-side half is verified: a transparent-mode display page computed
+`rgba(0, 0, 0, 0)` on `html`, `body` and `#display`, and when the page was composited over a
+saturated red backdrop in Chromium the backdrop showed through unchanged.
+
+Whether that alpha *reaches vMix* is a separate question, and it depends entirely on how vMix
+grabs the browser:
+
+- **A capture that composites the browser's own alpha** (a Browser/OBS-style source) — the
+  transparent page should key cleanly. Confirm it on your setup before you rely on it.
+- **Screen / Window capture** — these read the framebuffer, which has **no alpha channel at
+  all**. The background comes through as black.
+
+That is exactly what Chroma key mode is for: paint the wall a flat green and key it out in
+vMix or OBS. It works on every capture method, at the cost of one keyer.
+
+So: try **Transparent** first and check the result against your video. If the background comes
+through black or opaque, switch to **Chroma key** — do not expect alpha to survive a framebuffer
+capture, and do not disable anything in vMix to try to force it.
+
+### Legibility over video
+
+No scrim, panel or stroke is added behind the text — that would defeat the purpose. Legibility
+comes from the existing **Text shadow** setting: "Automatic" already resolves to a dark shadow
+for light text, which is what you want over an unknown background.
+
+### Cost
+
+None. Both modes ride the existing `style_change` message. There is no new message type, no
+extra round trip, and no polling. Images are never re-encoded to flatten alpha — the pipeline
+is untouched, so a PNG that carries its own transparency still composites correctly over the
+video underneath instead of sitting in an opaque frame.
+
+### Container notes
+
+Both modes are validated server-side in `normalize_background()`: `transparent` is normalised
+to exactly `{"type": "transparent"}` (a stale colour or blur cannot leak into a see-through
+frame), and `chroma` accepts only a 6-digit hex, falling back to `#00ff00` on anything
+unparseable — a bad value must never be able to paint the wall unreadable.
+
+---
+
 ## Firewall
 
-The server listens on `0.0.0.0:3000` (all interfaces). Allow inbound TCP port 3000 from the
-local network:
+The server listens on `0.0.0.0:3000` (all interfaces) — bound to every adapter on purpose, so
+Wi-Fi and Ethernet both work without reconfiguring. Allow inbound TCP port 3000 from the local
+network:
 
 **Windows:**
 ```powershell
@@ -243,10 +391,31 @@ Do NOT expose Proclaim to the public Internet — it is LAN-only by design.
 .venv/bin/python manage.py test presentation
 ```
 
-56 tests covering: scripture parsing (multi-word/numbered books, all translations),
+187 tests covering: scripture parsing (multi-word/numbered books, all translations),
 plain-text/ChordPro song import, the two-hymnal import, song search, safe image deletion,
 and the full WebSocket protocol (present → minimal `slide_change` → `blank` → reconnection
 snapshot) via `channels.testing.WebsocketCommunicator`.
+
+Newer coverage worth knowing about:
+
+- **Transparent / chroma** — both modes over the real socket, the server-side validator as a
+  unit, the `?bg=` override (including case/whitespace tolerance and junk rejection), and the
+  guarantee that `color`/`image` behaviour is unchanged.
+- **Controller route** — `/ws/control/<room>/` speaks the identical protocol, a projector is
+  never counted as a phone, and presence is released on disconnect.
+- **Networking** — request port beats `PROCLAIM_PORT` beats 3000; virtual adapters are demoted
+  but still listed; `.local` never wins the QR code; loopback/link-local never appear; the QR
+  is a real PNG and the `netsh` command carries the actual port (not a literal `%d`).
+- **Typography** — the type scale stays relative end to end, both pages load the shared design
+  system, and no removed per-slide class name survives anywhere.
+- **Packaging** — required hidden imports, the `nvx` exclusion, and `segno`/`psutil` are
+  declared in the spec and in both install scripts. These are cheap string assertions that
+  catch the worst class of regression: a dependency or asset silently unbundled.
+
+> Static assets are read through the `staticfiles` finder rather than fetched over HTTP,
+> because the test runner does not serve `/static/` (that is a DEBUG-only, live-server
+> behaviour). That also means the assertions hold for the packaged build, which reads the
+> same files out of `_internal/`.
 
 ---
 

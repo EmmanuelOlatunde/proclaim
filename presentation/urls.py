@@ -13,6 +13,12 @@ urlpatterns = [
     # REST API — Rooms & Queue
     path("api/rooms", views.room_list, name="room_list"),
     path("api/rooms/<str:code>/queue", views.queue_manage, name="queue_manage"),
+    path("api/rooms/<str:code>/presence", views.room_presence, name="room_presence"),
+
+    # REST API — Local network discovery (all computed on the server, no
+    # internet, no cloud, nothing leaves this machine)
+    path("api/network", views.network_info, name="network_info"),
+    path("api/network/qr", views.network_qr, name="network_qr"),
 
     # REST API — Songs
     path("api/songs", views.song_list, name="song_list"),

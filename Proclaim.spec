@@ -67,6 +67,24 @@ a = Analysis(
         # PyInstaller's static analysis).
         "django.core.management.commands.migrate",
         "django.core.management.commands.check",
+        # Offline QR codes for the Connect panel. segno is pure Python and
+        # writes its own PNG (no Pillow, no network), but the import in
+        # netinfo.qr_png_bytes() sits inside a function that PyInstaller's
+        # per-module analysis can miss; naming it here makes the dependency an
+        # explicit packaging decision. segno.writers is what actually rasterises
+        # the matrix we request with kind="png".
+        "segno",
+        "segno.encoder",
+        "segno.writers",
+        "segno.utils",
+        # psutil.net_if_addrs() is what lets netinfo name the interface
+        # ("wlp58s0 — Wi-Fi") and demote virtual adapters such as Docker
+        # bridges, which a phone can never reach. Its platform extension is a
+        # compiled .so/.pyd, so it is listed explicitly rather than left to
+        # analysis. netinfo catches ImportError and falls back to a stdlib
+        # enumeration, so a packaging failure here degrades the label text
+        # rather than breaking the Connect panel.
+        "psutil",
     ],
     hookspath=[],
     hooksconfig={},

@@ -54,12 +54,22 @@ def bundle_dir():
 
 
 def detect_lan_ip():
-    """The computer's LAN IPv4 address, detected without Internet access.
+    """The computer's single best LAN IPv4 address, detected offline.
 
-    Asks the OS which local address the default route would use (no packets
-    are ever sent), then falls back to any configured non-loopback address.
-    Returns 127.0.0.1 only when nothing better exists.
+    Retained for anything that just wants one address. The console banner uses
+    presentation.netinfo.connection_options() instead, because a machine with
+    several adapters has several plausible answers and printing only one of
+    them is how an operator ends up scanning the wrong QR code.
     """
+    try:
+        from presentation.netinfo import connection_options
+
+        options = connection_options(DEFAULT_PORT)
+        for option in options:
+            if option["likely"] or option["kind"] != "hostname":
+                return option["ip"]
+    except Exception:  # noqa: BLE001 — never let detection block startup
+        pass
     ip = ""
     probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -147,7 +157,7 @@ def assert_port_free(port):
         ) from exc
 
 
-def print_banner(ip, port, first_launch):
+def print_banner(port, first_launch):
     width = 76
     line = "=" * width
     print(line)
@@ -158,16 +168,56 @@ def print_banner(ip, port, first_launch):
         print("  First launch: a fresh application database was created.")
         print("  The bundled hymn library was installed into data/.")
         print("")
-    print("  Server: RUNNING")
+    print("  Server: RUNNING  (bound to 0.0.0.0)")
     print("")
-    print(f"  Local:   http://127.0.0.1:{port}/")
-    print(f"  LAN:     http://{ip}:{port}/")
+
+    # Every usable LAN address, best first, not just one guess. A machine with a
+    # Wi-Fi card *and* a wired connection — or one whose phone hotspot lives on a
+    # different adapter than the default route — has more than one plausible
+    # answer, and the operator is the only one who knows which network the phone
+    # is actually on. This mirrors the Connect panel on the landing page.
+    #
+    # The same ranked answer drives every URL printed below: the bind address
+    # stays 0.0.0.0, but what an operator is told to type is the address a phone
+    # can actually reach. 127.0.0.1 is only the last resort when netinfo has
+    # nothing to offer, because it is unreachable from any other device.
+    primary = None
+    options = None
+    lan_error = None
+    try:
+        from presentation.netinfo import connection_options, primary_url
+
+        primary = primary_url(port)
+        options = connection_options(port)
+    except Exception as exc:  # noqa: BLE001 — the banner must never block startup
+        lan_error = exc
+
+    base_url = primary.rstrip("/") if primary else f"http://127.0.0.1:{port}"
+
+    print(f"  Local:   {base_url}/")
     print("")
-    print("  Control (phone / laptop):")
-    print(f"  http://{ip}:{port}/control")
+    if options is not None:
+        print("  On this network (try these on the phone):")
+        for option in options:
+            if option["kind"] == "hostname":
+                continue
+            marker = "*" if option["url"] == primary else " "
+            note = ("  <- " + option["note"]) if option["note"] else ""
+            print(f"   {marker} {option['url']:<28} {option['label']}{note}")
+        print("   * = the address shown in the QR code on the Proclaim home page.")
+        print("")
+    else:
+        print(f"  LAN:     (could not list addresses: {lan_error})")
+        print("")
+
+    print("  Control (phone / laptop):  open the home page above, or")
+    print(f"    {base_url}/control")
     print("")
     print("  Display (laptop / projector source):")
-    print(f"  http://{ip}:{port}/display/CHURCH1")
+    print(f"    {base_url}/display/CHURCH1")
+    print("")
+    print("  Phone not connecting? Windows Firewall is the usual cause — allow")
+    print(f"  Proclaim on Private networks (TCP port {port}). Never disable it.")
     print("")
     print("  Press Ctrl+C to stop.")
     print(line)
@@ -190,6 +240,10 @@ def run():
     assert_port_free(resolve_port())
     first_launch = seed_runtime(root)
     port = resolve_port()
+    # Publish the resolved port so netinfo.server_port() and anything else that
+    # needs to render a QR code or a URL agrees with what Daphne is bound to,
+    # rather than assuming the default.
+    os.environ["PROCLAIM_PORT"] = str(port)
 
     import django
     django.setup()
@@ -197,8 +251,7 @@ def run():
     from django.core.management import call_command
     call_command("migrate", interactive=False, verbosity=1)
 
-    ip = detect_lan_ip()
-    print_banner(ip, port, first_launch)
+    print_banner(port, first_launch)
 
     # Start Daphne exactly as the `daphne` command would (no twistd, so no
     # Twisted plugin discovery is involved). Serves both HTTP and WebSockets.

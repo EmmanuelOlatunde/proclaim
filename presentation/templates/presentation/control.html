@@ -7,6 +7,11 @@
 <meta name="theme-color" content="#0B0F14">
 <title>ChurchCast Control — {{ room_code }}</title>
 <link rel="stylesheet" href="{% staticver 'presentation/css/fonts.css' %}">
+<!-- The shared presentation design system. Loaded here too so the Style tab's
+     live preview renders through exactly the rules the wall uses, instead of a
+     second copy of them. Only projected text is affected — the controller
+     chrome below is all .cc-* and stays phone-sized. -->
+<link rel="stylesheet" href="{% staticver 'presentation/css/presentation.css' %}">
 <link rel="stylesheet" href="{% staticver 'presentation/css/app.css' %}">
 </head>
 <body>

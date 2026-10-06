@@ -8,6 +8,7 @@ Tests for the local presentation system.
 """
 import json
 import os
+import re
 import shutil
 import tempfile
 import io
@@ -17,6 +18,7 @@ from asgiref.sync import sync_to_async
 from channels.testing import WebsocketCommunicator
 from churchcast.asgi import application
 from django.conf import settings
+from django.contrib.staticfiles import finders
 from django.core.files.uploadedfile import SimpleUploadedFile
 from PIL import Image, ImageOps
 
@@ -2006,3 +2008,773 @@ class WebSocketProtocolTests(django.test.TransactionTestCase):
         await control.receive_json_from()
         await display.disconnect()
         await control.disconnect()
+
+# ============================================================================
+# Transparent / chroma display modes
+# ============================================================================
+
+class TransparentBackgroundStyleTests(django.test.TransactionTestCase):
+    """The two compositing frame modes travel over the existing style message.
+
+    No new WebSocket message type is introduced and no extra round trip is
+    added: a display already understands `style_change`, so a transparent wall
+    costs the congregation's phone nothing.
+    """
+
+    async def _open(self):
+        display = WebsocketCommunicator(application, f"/ws/room/{ROOM_CODE}/")
+        control = WebsocketCommunicator(application, f"/ws/control/{ROOM_CODE}/")
+        self.assertTrue((await display.connect())[0])
+        self.assertTrue((await control.connect())[0])
+        await display.receive_json_from()
+        await control.receive_json_from()
+        return display, control
+
+    async def _style(self, display, control, styles):
+        await control.send_json_to({"type": "command", "command": {
+            "action": "set_style", "styles": styles,
+        }})
+        msg = await display.receive_json_from()
+        self.assertEqual(msg["type"], "style_change")
+        return msg["styles"]
+
+    async def test_transparent_carries_no_value(self):
+        display, control = await self._open()
+        st = await self._style(display, control, {"background": {"type": "transparent"}})
+        # Exactly {"type": "transparent"} — a stale colour or blur must not be
+        # able to leak into a frame that is supposed to be see-through.
+        self.assertEqual(st["background"], {"type": "transparent"})
+        await display.disconnect()
+        await control.disconnect()
+
+    async def test_transparent_drops_a_stale_blur(self):
+        """A room switched image -> transparent must not keep 'blur'."""
+        display, control = await self._open()
+        await self._style(display, control, {
+            "background": {"type": "image", "value": "/media/wall.jpg", "blur": "strong"},
+        })
+        st = await self._style(display, control, {"background": {"type": "transparent"}})
+        self.assertNotIn("blur", st["background"])
+        await display.disconnect()
+        await control.disconnect()
+
+    async def test_chroma_keeps_a_valid_key_colour(self):
+        display, control = await self._open()
+        st = await self._style(display, control, {
+            "background": {"type": "chroma", "value": "#00B140"},
+        })
+        self.assertEqual(st["background"], {"type": "chroma", "value": "#00b140"})
+        await display.disconnect()
+        await control.disconnect()
+
+    async def test_chroma_falls_back_to_green_on_junk(self):
+        """A bad key colour must never be able to paint the wall unreadable."""
+        display, control = await self._open()
+        for bad in ("red", "#fff", "#gggggg", "javascript:alert(1)", "#00FF00; background:url(x)", None, 42):
+            st = await self._style(display, control, {
+                "background": {"type": "chroma", "value": bad},
+            })
+            self.assertEqual(st["background"], {"type": "chroma", "value": "#00ff00"},
+                             msg=f"value={bad!r}")
+        await display.disconnect()
+        await control.disconnect()
+
+    async def test_mode_round_trip_back_to_normal(self):
+        """Normal mode must be byte-for-byte what it was before these modes."""
+        display, control = await self._open()
+        await self._style(display, control, {"background": {"type": "transparent"}})
+        st = await self._style(display, control, {"background": {"type": "color", "value": "#1E2A38"}})
+        self.assertEqual(st["background"], {"type": "color", "value": "#1E2A38"})
+        await display.disconnect()
+        await control.disconnect()
+
+    async def test_unknown_background_type_is_ignored(self):
+        display, control = await self._open()
+        await self._style(display, control, {"background": {"type": "color", "value": "#000000"}})
+        st = await self._style(display, control, {"background": {"type": "hologram", "value": "#000000"}})
+        self.assertEqual(st["background"], {"type": "color", "value": "#000000"})
+        await display.disconnect()
+        await control.disconnect()
+
+
+class NormalizeBackgroundTests(django.test.SimpleTestCase):
+    """Unit-level checks on the validator, independent of the socket layer."""
+
+    def test_image_behaviour_is_unchanged(self):
+        from .consumer import normalize_background
+        self.assertEqual(
+            normalize_background({"type": "image", "value": "/media/a.jpg", "blur": "soft"}),
+            {"type": "image", "value": "/media/a.jpg", "blur": "soft"},
+        )
+        self.assertEqual(normalize_background({"type": "image", "value": "/media/a.jpg"}),
+                         {"type": "image", "value": "/media/a.jpg", "blur": "off"})
+        self.assertEqual(normalize_background({"type": "image", "value": "/media/a.jpg", "blur": "wild"}),
+                         {"type": "image", "value": "/media/a.jpg", "blur": "off"})
+        self.assertEqual(normalize_background({"type": "color", "value": "#FFFFFF"}),
+                         {"type": "color", "value": "#FFFFFF"})
+
+    def test_value_is_required_for_colour_and_image(self):
+        from .consumer import normalize_background
+        # No value means "leave the current background alone" (returns None).
+        self.assertIsNone(normalize_background({"type": "image"}))
+        self.assertIsNone(normalize_background({"type": "color", "value": ""}))
+        self.assertIsNone(normalize_background("not a dict"))
+        self.assertIsNone(normalize_background(None))
+
+    def test_transparent_ignores_any_value(self):
+        from .consumer import normalize_background
+        self.assertEqual(
+            normalize_background({"type": "transparent", "value": "#FF0000", "blur": "strong"}),
+            {"type": "transparent"},
+        )
+
+
+class DisplayBackgroundOverrideTests(django.test.TestCase):
+    """?bg= pins one browser's frame without touching the room's style."""
+
+    def test_override_is_passed_to_the_template(self):
+        for choice in ("transparent", "chroma"):
+            with self.subTest(bg=choice):
+                r = self.client.get(f"/display/{ROOM_CODE}?bg={choice}")
+                self.assertEqual(r.status_code, 200)
+                self.assertEqual(r.context["display_bg"], choice)
+
+    def test_default_and_junk_fall_back_to_room(self):
+        r = self.client.get(f"/display/{ROOM_CODE}")
+        self.assertEqual(r.context["display_bg"], "room")
+        # An unknown value must not reach display.js as anything it would honour.
+        for junk in ("banana", "javascript:alert(1)", "translucent", "0"):
+            with self.subTest(bg=junk):
+                r = self.client.get(f"/display/{ROOM_CODE}", {"bg": junk})
+                self.assertEqual(r.context["display_bg"], "room")
+
+    def test_case_and_whitespace_are_tolerated(self):
+        """These URLs get typed and edited by hand; be forgiving about both."""
+        for variant in ("TRANSPARENT", "  chroma  ", "Chroma", "Transparent"):
+            with self.subTest(bg=variant):
+                r = self.client.get(f"/display/{ROOM_CODE}", {"bg": variant})
+                self.assertEqual(r.context["display_bg"], variant.strip().lower())
+
+    def test_explicit_room_is_valid(self):
+        r = self.client.get(f"/display/{ROOM_CODE}?bg=room")
+        self.assertEqual(r.context["display_bg"], "room")
+
+    def test_override_is_reachable_from_the_console(self):
+        """The view must not create a second Room row for a bogus code path."""
+        r = self.client.get("/display/NEWROOM01?bg=transparent")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(Room.objects.filter(code="NEWROOM01").exists())
+
+
+# ============================================================================
+# Controller route + presence
+# ============================================================================
+
+class ControllerRouteTests(django.test.TransactionTestCase):
+    """/ws/control/ is additive: same room group, same protocol, but it is
+    recorded as a controller so the Connect panel can report a live phone."""
+
+    async def test_control_route_speaks_the_same_protocol(self):
+        display = WebsocketCommunicator(application, f"/ws/room/{ROOM_CODE}/")
+        control = WebsocketCommunicator(application, f"/ws/control/{ROOM_CODE}/")
+        self.assertTrue((await display.connect())[0])
+        self.assertTrue((await control.connect())[0])
+
+        init = await control.receive_json_from()
+        self.assertEqual(init["type"], "state")
+        self.assertEqual(init["state"]["room"], ROOM_CODE)
+
+        # A blank from the controller must reach the display untouched: the
+        # route changed, the protocol did not.
+        await display.receive_json_from()
+        await control.send_json_to({"type": "command", "command": {"action": "blank", "value": True}})
+        msg = await display.receive_json_from()
+        self.assertEqual(msg["type"], "blank")
+        self.assertTrue(msg["blank"])
+
+        await display.disconnect()
+        await control.disconnect()
+
+    async def test_display_route_still_exists_and_is_not_counted_as_a_phone(self):
+        from .consumer import presence
+        display = WebsocketCommunicator(application, f"/ws/room/{ROOM_CODE}/")
+        self.assertTrue((await display.connect())[0])
+        await display.receive_json_from()
+        # A projector must never make the Connect panel claim a phone is here.
+        self.assertEqual(presence(ROOM_CODE)["control"], 0)
+        self.assertEqual(presence(ROOM_CODE)["display"], 1)
+        await display.disconnect()
+
+    async def test_presence_counts_controllers_and_drops_them_on_disconnect(self):
+        from .consumer import presence, rooms_with_controller
+        control = WebsocketCommunicator(application, f"/ws/control/{ROOM_CODE}/")
+        self.assertTrue((await control.connect())[0])
+        await control.receive_json_from()
+        self.assertEqual(presence(ROOM_CODE)["control"], 1)
+        self.assertIn(ROOM_CODE, rooms_with_controller())
+
+        await control.disconnect()
+        # disconnect() only queues the close frame; receive_output lets the
+        # application finish handling it.
+        for _ in range(4):
+            try:
+                await control.receive_output(timeout=1)
+            except Exception:
+                break
+        self.assertEqual(presence(ROOM_CODE)["control"], 0)
+        self.assertNotIn(ROOM_CODE, rooms_with_controller())
+
+    async def test_route_requires_the_trailing_slash(self):
+        """A missing trailing slash must be rejected cleanly, not crash.
+
+        control.js builds the path itself, so a regression here would show up
+        as a phone that silently never connects. Over Daphne the unhandled
+        router exception surfaced as HTTP 500 plus a traceback — an internal
+        server error for what is really a typo'd URL. The connection must now
+        simply refuse to open, and it must not raise in the harness either.
+        """
+        bad = WebsocketCommunicator(application, f"/ws/control/{ROOM_CODE}")
+        opened, detail = await bad.connect()
+        self.assertFalse(opened, "missing-slash URL must not open a socket")
+
+    async def test_display_route_also_requires_the_trailing_slash(self):
+        """Same contract for the display route, for the same reason."""
+        bad = WebsocketCommunicator(application, f"/ws/room/{ROOM_CODE}")
+        opened, detail = await bad.connect()
+        self.assertFalse(opened, "missing-slash URL must not open a socket")
+
+    async def test_valid_slash_routes_still_open(self):
+        """The two real routes are untouched by the rejection wrapper."""
+        for path in (
+            f"/ws/control/{ROOM_CODE}/",
+            f"/ws/room/{ROOM_CODE}/",
+        ):
+            comm = WebsocketCommunicator(application, path)
+            opened, _ = await comm.connect()
+            self.assertTrue(opened, f"{path} must still connect")
+            await comm.receive_json_from()
+            await comm.disconnect()
+
+
+class PresenceApiTests(django.test.TestCase):
+    def test_unknown_room_reports_zero_rather_than_erroring(self):
+        r = self.client.get("/api/rooms/NOSUCH/presence")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["code"], "NOSUCH")
+        self.assertFalse(body["connected"])
+        self.assertEqual(body["control"], 0)
+
+    def test_connected_flag_reflects_controllers_only(self):
+        from .consumer import presence
+        Room.objects.get_or_create(code=ROOM_CODE)
+        try:
+            presence(ROOM_CODE)  # touch to ensure the entry exists
+            r = self.client.get(f"/api/rooms/{ROOM_CODE}/presence")
+            self.assertFalse(r.json()["connected"])
+        finally:
+            pass
+
+
+# ============================================================================
+# Local network discovery + QR
+# ============================================================================
+
+class ServerPortTests(django.test.SimpleTestCase):
+    """The QR code must encode the port the server is really listening on."""
+
+    def _report(self, meta_port=None, env=None):
+        from presentation import netinfo
+        old = os.environ.get("PROCLAIM_PORT")
+        if env is None:
+            os.environ.pop("PROCLAIM_PORT", None)
+        else:
+            os.environ["PROCLAIM_PORT"] = env
+        try:
+            req = django.test.RequestFactory().get("/api/network")
+            if meta_port is not None:
+                req.META["SERVER_PORT"] = str(meta_port)
+            else:
+                # RequestFactory defaults SERVER_PORT to 80, which is a truthful
+                # value; remove it so the fallback chain is actually exercised.
+                req.META.pop("SERVER_PORT", None)
+            return netinfo.server_port(req)
+        finally:
+            if old is None:
+                os.environ.pop("PROCLAIM_PORT", None)
+            else:
+                os.environ["PROCLAIM_PORT"] = old
+
+    def test_request_port_wins_over_the_environment(self):
+        # A reverse proxy or an unusual bind can disagree with PROCLAIM_PORT;
+        # what the phone will actually dial is the port in the request.
+        self.assertEqual(self._report(meta_port=4123, env="3000"), 4123)
+
+    def test_falls_back_to_the_environment(self):
+        self.assertEqual(self._report(meta_port=None, env="4000"), 4000)
+
+    def test_default_when_nothing_is_known(self):
+        self.assertEqual(self._report(meta_port=None, env=None), 3000)
+
+    def test_junk_is_ignored(self):
+        self.assertEqual(self._report(meta_port=None, env="not-a-port"), 3000)
+
+
+class ConnectionOptionsTests(django.test.SimpleTestCase):
+    """Ranking rules, tested against a synthetic interface table.
+
+    The point of the ranking is that a Docker/VirtualBox address is often listed
+    first by the OS but is unreachable from a phone, so it must never win.
+    """
+
+    def setUp(self):
+        from presentation import netinfo
+        self.netinfo = netinfo
+
+    def _entry(self, ip, interface, kind, label, likely, route=False):
+        """One entry shaped exactly like netinfo.enumerate_addresses() returns."""
+        return {"ip": ip, "interface": interface, "kind": kind, "label": label,
+                "likely": likely, "private": True, "route": route}
+
+    def _options(self, entries, port=3000):
+        orig = self.netinfo.enumerate_addresses
+        self.netinfo.enumerate_addresses = lambda: entries
+        try:
+            return self.netinfo.connection_options(port)
+        finally:
+            self.netinfo.enumerate_addresses = orig
+
+    def test_virtual_interfaces_are_demoted_but_still_shown(self):
+        entries = [
+            self._entry("172.17.0.1", "docker0", "virtual",
+                        "Virtual adapter (phone will not reach this)", False),
+            self._entry("192.168.1.50", "wlp58s0", "wifi", "Wi-Fi", True, route=True),
+        ]
+        options = [o for o in self._options(entries) if o["kind"] != "hostname"]
+        self.assertEqual(len(options), 2, "nothing may be silently discarded")
+        self.assertFalse(options[0]["likely"])
+        self.assertTrue(options[1]["likely"])
+        # The operator has to be able to tell, at a glance, why an address is
+        # listed last — otherwise they will pick it and wonder why it fails.
+        self.assertIn("Virtual adapter", options[0]["label"])
+
+    def test_urls_carry_the_requested_port(self):
+        entries = [self._entry("10.0.0.7", "eth0", "ethernet", "Ethernet", True)]
+        self.assertEqual(self._options(entries, port=4001)[0]["url"], "http://10.0.0.7:4001/")
+
+    def test_primary_prefers_the_likely_interface(self):
+        entries = [
+            self._entry("172.18.0.1", "br-abc", "virtual",
+                        "Virtual adapter (phone will not reach this)", False),
+            self._entry("192.168.137.2", "wlan0", "wifi", "Wi-Fi", True),
+        ]
+        orig_enum = self.netinfo.enumerate_addresses
+        orig_name = self.netinfo.hostname
+        self.netinfo.enumerate_addresses = lambda: entries
+        self.netinfo.hostname = lambda: ""
+        try:
+            self.assertEqual(self.netinfo.primary_url(3000), "http://192.168.137.2:3000/")
+        finally:
+            self.netinfo.enumerate_addresses = orig_enum
+            self.netinfo.hostname = orig_name
+
+    def test_hostname_never_wins_the_qr_code(self):
+        """mDNS is unreliable and must not be what the phone is asked to open."""
+        entries = [self._entry("192.168.137.2", "wlan0", "wifi", "Wi-Fi", False)]
+        orig_enum = self.netinfo.enumerate_addresses
+        orig_name = self.netinfo.hostname
+        self.netinfo.enumerate_addresses = lambda: entries
+        self.netinfo.hostname = lambda: "laptop"
+        try:
+            self.assertEqual(self.netinfo.primary_url(3000), "http://192.168.137.2:3000/")
+        finally:
+            self.netinfo.enumerate_addresses = orig_enum
+            self.netinfo.hostname = orig_name
+
+    def test_no_candidates_still_yields_a_usable_url(self):
+        orig_enum = self.netinfo.enumerate_addresses
+        orig_name = self.netinfo.hostname
+        self.netinfo.enumerate_addresses = lambda: []
+        self.netinfo.hostname = lambda: ""
+        try:
+            self.assertEqual(self.netinfo.primary_url(3000), "http://127.0.0.1:3000/")
+        finally:
+            self.netinfo.enumerate_addresses = orig_enum
+            self.netinfo.hostname = orig_name
+
+    def test_unusable_addresses_are_filtered_out_entirely(self):
+        """Loopback, unspecified and link-local can never be typed on a phone."""
+        import socket as _socket
+        for addr in ("127.0.0.1", "0.0.0.0", "169.254.10.1", "::1"):
+            with self.subTest(addr=addr):
+                self.assertTrue(
+                    addr.startswith(("127.", "0.0.0.0", "169.254.", "::")) and not addr.startswith("192.168."),
+                    "sanity: the filter list matches the documented exclusions",
+                )
+        # The real function, on the real machine, must never return these.
+        from presentation.netinfo import enumerate_addresses
+        for entry in enumerate_addresses():
+            ip = entry["ip"]
+            self.assertFalse(ip.startswith("127."), ip)
+            self.assertFalse(ip.startswith("169.254."), ip)
+            self.assertNotEqual(ip, "0.0.0.0", ip)
+            _socket.inet_aton(ip)  # must be a parseable address
+
+
+class QrCodeTests(django.test.SimpleTestCase):
+    def test_qr_is_a_png(self):
+        from presentation import netinfo
+        png = netinfo.qr_png_bytes("http://192.168.1.50:3000/")
+        self.assertTrue(png.startswith(b"\x89PNG\r\n\x1a\n"))
+        # And it really is a decodable-sized QR, not a 1x1 placeholder.
+        img = Image.open(io.BytesIO(png))
+        self.assertGreaterEqual(img.width, 100)
+        self.assertEqual(img.width, img.height)
+
+    def test_data_uri_is_inline_png(self):
+        from presentation import netinfo
+        uri = netinfo.qr_data_uri("http://192.168.1.50:3000/")
+        self.assertTrue(uri.startswith("data:image/png;base64,"))
+        import base64
+        raw = base64.b64decode(uri.split(",", 1)[1])
+        self.assertTrue(raw.startswith(b"\x89PNG"))
+
+    def test_long_hotspot_urls_still_fit(self):
+        """192.168.x.x hosts plus a long path must not overflow the symbol."""
+        from presentation import netinfo
+        long_url = "http://192.168.137.123:65535/display/" + "R" * 200
+        self.assertTrue(netinfo.qr_png_bytes(long_url).startswith(b"\x89PNG"))
+
+
+class NetworkApiTests(django.test.TestCase):
+    def test_network_info_shape(self):
+        Room.objects.get_or_create(code=ROOM_CODE)
+        r = self.client.get("/api/network")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        for key in ("port", "bind", "hostname", "primaryUrl", "urls", "firewallHint", "netshCommand", "rooms", "presence"):
+            self.assertIn(key, body, key)
+        self.assertEqual(body["bind"], "0.0.0.0")
+        self.assertTrue(body["primaryUrl"].startswith("http://"))
+        self.assertIn(ROOM_CODE, [room["code"] for room in body["rooms"]])
+
+    def test_netsh_command_contains_the_real_port(self):
+        """Regression: the command used to ship a literal %d."""
+        r = self.client.get("/api/network")
+        self.assertNotIn("%d", r.json()["netshCommand"])
+        self.assertIn(str(r.json()["port"]), r.json()["netshCommand"])
+
+    def test_urls_are_all_local_addresses(self):
+        """Nothing in this payload may reference a public host."""
+        body = self.client.get("/api/network").json()
+        for option in body["urls"]:
+            host = option["url"].split("//", 1)[1].split(":", 1)[0]
+            self.assertNotIn("://", host)
+            self.assertTrue(
+                host.startswith(("127.", "10.", "172.", "192.168.")) or host.endswith(".local"),
+                msg=f"{host} is not a local address",
+            )
+
+    def test_qr_endpoint_returns_a_png(self):
+        r = self.client.get("/api/network/qr")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "image/png")
+        self.assertTrue(r.content.startswith(b"\x89PNG"))
+        # A local address that can change must never be cached.
+        self.assertIn("no-store", r["Cache-Control"])
+        self.assertTrue(r["X-Proclaim-Url"].startswith("http://"))
+
+    def test_qr_index_is_clamped_not_a_500(self):
+        for raw in ("0", "1", "999", "-3", "abc", "", "1.5"):
+            with self.subTest(index=raw):
+                r = self.client.get("/api/network/qr", {"index": raw})
+                self.assertEqual(r.status_code, 200)
+                self.assertTrue(r.content.startswith(b"\x89PNG"))
+
+    def test_qr_encodes_the_same_url_the_report_advertises(self):
+        """The code and the written address must never disagree."""
+        report = self.client.get("/api/network").json()
+        r = self.client.get("/api/network/qr")
+        self.assertEqual(r["X-Proclaim-Url"], report["primaryUrl"])
+        self.assertIn(f":{report['port']}/", r["X-Proclaim-Url"])
+
+    def test_qr_index_selects_a_specific_address(self):
+        report = self.client.get("/api/network").json()
+        if len(report["urls"]) < 2:
+            self.skipTest("this machine has only one candidate address")
+        second = report["urls"][1]["url"]
+        r = self.client.get("/api/network/qr", {"index": 1})
+        self.assertEqual(r["X-Proclaim-Url"], second)
+
+
+# ============================================================================
+# Typography / asset wiring
+# ============================================================================
+
+class StaticAssetMixin:
+    """Read bundled assets off disk.
+
+    The test runner does not serve /static/ (that is a DEBUG-only, live-server
+    behaviour), and the packaged build reads these same files out of
+    _internal/. Going through the staticfiles finder therefore matches both.
+    """
+
+    def asset(self, logical_path):
+        """`logical_path` is the STATIC-relative path, e.g. presentation/js/x.js."""
+        found = finders.find(logical_path)
+        self.assertIsNotNone(found, f"{logical_path} is not bundled as a static file")
+        with open(found, encoding="utf-8") as fh:
+            return fh.read()
+
+
+class PresentationTypographyTests(StaticAssetMixin, django.test.TestCase):
+    """One projected type scale, shared by the wall and the phone preview."""
+
+    def test_design_system_exists(self):
+        css = self.asset("presentation/css/presentation.css")
+        for selector in (".d-slide", ".d-slide__title", ".d-slide__body",
+                         ".d-slide__label", ".d-slide__timer", "--pres-scale"):
+            self.assertIn(selector, css, selector)
+
+    def test_type_scale_is_relative_so_it_scales_with_the_wall(self):
+        """em-based sizing is what lets one rule serve a laptop and a projector.
+
+        The single knob is --pres-em (the display sets it from the viewport, the
+        thumbnail from a fixed 15px). --pres-scale is a unitless multiplier on
+        top of that, and every role size is expressed in em against it — so
+        changing one number rescales the whole wall coherently.
+        """
+        css = self.asset("presentation/css/presentation.css")
+        lines = css.splitlines()
+
+        self.assertTrue([ln for ln in lines if "--pres-em:" in ln],
+                        "--pres-em is not declared")
+
+        # --pres-scale is the unitless operator-size x shrink-to-fit multiplier;
+        # the two meet on .d-slide's own font-size. Check that seam, because it
+        # is the one place a hard-coded px would silently kill the whole system.
+        slide = self._block(css, ".d-slide")
+        self.assertRegex(slide, r"font-size:\s*calc\(var\(--pres-em\)\s*\*\s*var\(--pres-scale\)\)", slide)
+
+        # Roles that deliberately sit *below* the slide's own size must express
+        # that as a ratio, never as an absolute value.
+        for role in ("__title", "__body", "__label", "__timer", "__ref", "__note"):
+            block = self._block(css, f".d-slide{role}")
+            sizes = re.findall(r"font-size:\s*([^;]+);", block)
+            self.assertTrue(sizes, f".d-slide{role} has no font-size")
+            for size in sizes:
+                self.assertIn("em", size, f".d-slide{role} is not relative: {size}")
+
+        # Scripture verse text and song lyrics ARE the main wall text, so they
+        # intentionally inherit .d-slide's size rather than restating it. Assert
+        # that they declare no font-size at all — a stray 1em here would be
+        # harmless today but would break the moment the base scale moved.
+        for role in ("__verse", "__lyric"):
+            block = self._block(css, f".d-slide{role}")
+            self.assertNotIn("font-size", block,
+                             f".d-slide{role} should inherit the slide size")
+            # They still take their colour and weight from the tokens.
+            self.assertIn("var(--d-weight", block + self._block(css, ".d-slide"),
+                          f".d-slide{role} lost its weight token")
+
+        # A wall that is a hair narrower must not re-declare the whole scale.
+        self.assertNotIn("px", self._block(css, ".d-slide"))
+
+    @staticmethod
+    def _block(css, selector):
+        """The declaration block for exactly `selector`, or ''."""
+        match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
+        return match.group(1) if match else ""
+
+    def test_display_and_control_both_load_it(self):
+        for path in (f"/display/{ROOM_CODE}", "/control"):
+            with self.subTest(page=path):
+                html = self.client.get(path).content.decode()
+                self.assertIn("presentation/css/presentation.css", html)
+
+    def test_display_publishes_its_background_override(self):
+        html = self.client.get(f"/display/{ROOM_CODE}?bg=transparent").content.decode()
+        self.assertIn("window.DISPLAY_BG", html)
+        self.assertIn("transparent", html)
+
+
+class TransparentSurfaceTests(StaticAssetMixin, django.test.TestCase):
+    """The frame must not be able to paint an opaque surface of its own."""
+
+    def test_display_css_routes_every_surface_through_a_variable(self):
+        css = self.asset("presentation/css/display.css")
+        for var in ("--d-page-bg", "--d-blank-bg", "--d-figure-bg"):
+            self.assertIn(var, css, var)
+        self.assertIn("var(--d-page-bg)", css)
+        # The letterbox behind a projected image is the classic place where an
+        # opaque black box leaks over the video underneath.
+        self.assertRegex(css, r"\.d-image\s*\{[^}]*background:\s*var\(--d-figure-bg\)")
+
+    def test_transparent_class_clears_display_and_stage(self):
+        css = self.asset("presentation/css/display.css")
+        self.assertIn(".d-transparent #display", css)
+        self.assertIn("transparent", css)
+
+    def test_controller_preview_shows_a_checkerboard(self):
+        """Transparent mode must be distinguishable from plain black."""
+        css = self.asset("presentation/css/app.css")
+        block = re.search(r"\.cc-transparent\s*\{[^}]*\}", css)
+        self.assertIsNotNone(block, ".cc-transparent rule is missing")
+        body = block.group(0)
+        # The classic two-offset-gradient checkerboard, not a flat colour.
+        self.assertGreaterEqual(body.count("linear-gradient"), 2, body)
+        self.assertIn("background-size", body, body)
+
+
+class ConnectAssetsTests(StaticAssetMixin, django.test.TestCase):
+    def test_connect_assets_are_bundled(self):
+        for path in ("presentation/css/net.css", "presentation/js/net.js"):
+            with self.subTest(path=path):
+                self.assertIsNotNone(finders.find(path), path)
+
+    def test_connect_panel_never_calls_an_external_host(self):
+        """The QR code must be generated by this machine, not fetched."""
+        js = self.asset("presentation/js/net.js")
+        self.assertNotIn("http://", js.replace("ms-settings:", ""))
+        self.assertNotIn("https://", js)
+
+    def test_landing_page_loads_them_and_shows_the_qr(self):
+        html = self.client.get("/").content.decode()
+        self.assertIn("presentation/css/net.css", html)
+        self.assertIn("presentation/js/net.js", html)
+        self.assertIn("/api/network/qr", html)
+
+    def test_net_js_only_touches_elements_the_page_has(self):
+        """A typo'd getElementById is a silent no-op at runtime, not an error."""
+        html = self.client.get("/").content.decode()
+        ids_in_page = set(re.findall(r'id="([^"]+)"', html))
+        wanted = set(re.findall(r'getElementById\("([^"]+)"\)',
+                                 self.asset("presentation/js/net.js")))
+        self.assertTrue(wanted, "net.js looks up nothing — is it wired up?")
+        self.assertEqual(wanted - ids_in_page, set(),
+                         "net.js asks for ids the landing page does not render")
+
+    def test_room_rows_carry_the_code_they_report_on(self):
+        """net.js refreshes rows via [data-room]; without it they freeze stale."""
+        Room.objects.get_or_create(code=ROOM_CODE, defaults={"name": "Test"})
+        html = self.client.get("/").content.decode()
+        self.assertIn(f'data-room="{ROOM_CODE}"', html)
+
+    def test_every_element_net_js_paints_is_styled(self):
+        css = self.asset("presentation/css/net.css")
+        html = self.client.get("/").content.decode()
+        js = self.asset("presentation/js/net.js")
+        on_page = set(w for group in re.findall(r'class="([^"]+)"', html) for w in group.split())
+        on_page |= set(re.findall(r"'(cc-[a-z0-9_-]+)", js))
+        styled = set(re.findall(r"\.(cc-[a-z0-9_-]+)", css))
+        # Classes the template emits only inside an {% if %}/{% empty %} branch
+        # are legitimately absent from this render; check them against the source.
+        with open(os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "templates/presentation/index.html"), encoding="utf-8") as fh:
+            on_page |= set(re.findall(r"cc-[a-z0-9_-]+", fh.read()))
+        missing = styled - on_page
+        self.assertEqual(missing, set(),
+                         f"net.css styles classes nothing uses: {sorted(missing)}")
+
+    def test_landing_page_does_not_leak_wall_only_assets(self):
+        """The Connect panel is operator UI; the design system is not for it."""
+        html = self.client.get("/").content.decode()
+        self.assertNotIn("presentation/css/presentation.css", html)
+        self.assertNotIn("presentation/css/display.css", html)
+
+    def test_no_reference_to_removed_typography_classes(self):
+        """Old per-slide class names must not survive anywhere."""
+        stale = ("d-align", "d-scripture", "d-announcement", "d-countdown", "d-song")
+        files = [
+            "presentation/css/presentation.css",
+            "presentation/css/display.css",
+            "presentation/css/app.css",
+            "presentation/js/display.js",
+            "presentation/js/control.js",
+        ]
+        for rel in files:
+            with self.subTest(file=rel):
+                body = self.asset(rel)
+                for name in stale:
+                    self.assertNotIn(name, body, f"{rel} still references {name}")
+
+
+class PackagingContractTests(django.test.SimpleTestCase):
+    """The portable build must keep working. These are cheap and prevent the
+    worst class of regression: a new dependency or asset silently unbundled."""
+
+    ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def _read(self, name):
+        with open(os.path.join(self.ROOT, name), encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_required_hidden_imports_survive(self):
+        spec = self._read("Proclaim.spec")
+        for name in ("churchcast.asgi", "presentation.templatetags",
+                     "presentation.templatetags.versioned_static", "daphne.cli"):
+            self.assertIn(f'"{name}"', spec, name)
+
+    def test_autobahn_nvx_stays_excluded(self):
+        """Excluding nvx is what keeps django.setup() alive in the bundle."""
+        spec = self._read("Proclaim.spec")
+        self.assertIn("autobahn.nvx", spec)
+        self.assertIn("_nvx_utf8validator", spec)
+
+    def test_qr_and_psutil_are_bundled(self):
+        spec = self._read("Proclaim.spec")
+        self.assertIn('"segno"', spec)
+        self.assertIn('"psutil"', spec)
+
+    def test_new_dependencies_are_declared_everywhere_they_are_installed(self):
+        for script in ("start.sh", "build_windows.bat"):
+            body = self._read(script)
+            for dep in ("segno", "psutil"):
+                self.assertIn(dep, body, f"{dep} missing from {script}")
+
+    def test_portable_banner_shares_the_ranking(self):
+        """The console must not advertise a different address than the QR."""
+        body = self._read("portable.py")
+        self.assertIn("connection_options", body)
+        self.assertIn("PROCLAIM_PORT", body)
+
+    def test_banner_advertises_the_ranked_lan_address_not_localhost(self):
+        """The bind address is for the server; the printed URL is for the phone.
+
+        A banner showing 127.0.0.1 tells the operator to type an address that
+        only works on the machine running Proclaim, so the URL has to come from
+        the same ranking the QR code uses.
+        """
+        import contextlib
+        import io
+
+        import portable
+        from presentation import netinfo
+
+        entry = {"ip": "192.168.1.178", "interface": "wlp3s0", "kind": "wifi",
+                 "label": "Wi-Fi", "likely": True, "private": True, "route": True}
+        orig_enum = netinfo.enumerate_addresses
+        orig_name = netinfo.hostname
+        netinfo.enumerate_addresses = lambda: [entry]
+        netinfo.hostname = lambda: ""
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                portable.print_banner(3000, False)
+        finally:
+            netinfo.enumerate_addresses = orig_enum
+            netinfo.hostname = orig_name
+
+        out = buf.getvalue()
+        self.assertIn("http://192.168.1.178:3000/", out)
+        self.assertIn("http://192.168.1.178:3000/control", out)
+        self.assertIn("http://192.168.1.178:3000/display/CHURCH1", out)
+        self.assertNotIn("127.0.0.1", out)
+        # Printing the LAN address must never move the socket it binds to.
+        self.assertIn("0.0.0.0", out)
+
+    def test_templates_and_static_whole_trees_are_bundled(self):
+        spec = self._read("Proclaim.spec")
+        self.assertIn('("presentation/static", "presentation/static")', spec)
+        self.assertIn('("presentation/templates", "presentation/templates")', spec)

@@ -1,0 +1,202 @@
+/* ============================================================
+   Proclaim — presentation design system
+   ------------------------------------------------------------
+   ONE place for every rule that shapes projected text.
+
+   Loaded by the wall (display.html) and by the control page's
+   mini preview (control.html), so what the operator previews on
+   the phone is the same typography the congregation sees — not a
+   hand-maintained copy of it.
+
+   Layout / typography / alignment / colour / spacing / effects
+   all live here as tokens plus semantic classes:
+
+     .d-slide              slide layout box
+     .d-slide__label       small uppercase eyebrow (song section, timer label)
+     .d-slide__ref         scripture reference
+     .d-slide__title       announcement title
+     .d-slide__body        announcement body / general text
+     .d-slide__verse       scripture verse text
+     .d-slide__lyric       song lyric text
+     .d-slide__timer       countdown digits
+     .d-slide__note        placeholder / helper text
+
+   Sizing model
+   ------------
+   Everything scales from a single knob, --pres-em, which is the
+   size of the wall's main lyric text. The per-role ratios below
+   reproduce the sizes this app has always used, and they stay
+   stable across projector widths because every role moved
+   together. Two multipliers ride on top:
+
+     --d-mult   the operator's Text size setting (60%–160%)
+     --d-fit    the wall's own shrink-to-fit, applied when a long
+                scripture, lyric or announcement would overflow
+
+   A surface opts in by setting --pres-em for its own width, which
+   is how the phone preview gets thumbnail-sized text from the
+   very same rules:
+
+     the wall     .d-surface   -> --pres-em: clamp(2.2vw, 4vw, 3.8vw)
+     the preview  .cc-mini-preview__inner -> --pres-em: 15px
+
+   No web fonts, no @import, no network: the bundled offline
+   faces come from fonts.css and are selected with --d-font.
+   ============================================================ */
+
+:root {
+  /* Typography ------------------------------------------------------------ */
+  --pres-font-family: var(--d-font);
+  --pres-line-height: var(--d-line, 1.55);
+  --pres-text-align: center;
+
+  /* The one size everything else is measured against. */
+  --pres-em: clamp(2.2vw, 4vw, 3.8vw);
+  /* Operator Text size × the wall's shrink-to-fit. */
+  --pres-scale: calc(var(--d-mult, 1) * var(--d-fit, 1));
+
+  /* Colour roles. --d-color / --d-ref-color are the operator's
+     Text colour and Reference colour overrides; when unset these
+     fall back to the built-in palette below. */
+  --pres-color: var(--d-color, #F5F7FA);
+  --pres-color-strong: var(--d-ref-color, #FFFFFF);
+  --pres-color-body: var(--d-color, #E8ECF1);
+  --pres-color-secondary: var(--d-color, #C8D0DA);
+  --pres-color-muted: #9AA6B2;
+  --pres-color-faint: #6B7A8F;
+
+  /* Spacing -------------------------------------------------------------- */
+  --pres-measure: 76vw;         /* widest a line of text may run */
+  --pres-gap: 2vw;              /* title -> body */
+  --pres-gap-sm: 1vw;           /* label -> text */
+  --pres-gap-timer: 1.5vw;
+  --pres-label-tracking: 0.2em;
+  --pres-ref-tracking: 0.06em;
+  --pres-timer-tracking: 0.3em;
+}
+
+/* ---- Slide layout -------------------------------------------------------
+   One box, centred both ways, for every text-bearing slide type. The
+   old per-type flex rules all collapsed to this. */
+.d-slide {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pres-gap);
+  font-family: var(--pres-font-family);
+  font-size: calc(var(--pres-em) * var(--pres-scale));
+  line-height: var(--pres-line-height);
+  text-align: var(--pres-text-align);
+  color: var(--pres-color);
+  max-width: 100%;
+  white-space: pre-wrap;
+}
+
+/* Each slide type keeps the gap it has always had, now as one token
+   instead of a hard-coded number per selector. */
+.d-slide--song { gap: var(--pres-gap-sm); }
+.d-slide--countdown { gap: var(--pres-gap-timer); }
+
+/* ---- Roles ---------------------------------------------------------------
+   Every role is a plain multiplier of the slide's own font size, so a
+   change to --pres-em or --d-mult moves the whole wall at once. */
+
+/* Announcements and general text: the title leads, the body follows.
+   Both are centred horizontally and vertically by .d-slide. */
+.d-slide__title {
+  font-size: 1.38em;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--pres-color-strong);
+  text-shadow: var(--d-shadow, none);
+}
+
+.d-slide__body {
+  font-size: 0.74em;
+  font-weight: var(--d-weight, 400);
+  color: var(--pres-color-secondary);
+  max-width: var(--pres-measure);
+}
+
+/* Scripture: the reference is the eyebrow, the verse is the body. */
+.d-slide__ref {
+  font-size: 1.1em;
+  font-weight: 700;
+  letter-spacing: var(--pres-ref-tracking);
+  text-transform: uppercase;
+  color: var(--pres-color-strong);
+  text-shadow: var(--d-shadow, none);
+}
+
+.d-slide__verse {
+  font-weight: var(--d-weight, 400);
+  color: var(--pres-color-body);
+  max-width: var(--pres-measure);
+}
+
+/* Songs: lyrics are the largest body text on the wall; the section
+   label sits quietly above them. */
+.d-slide__lyric {
+  font-weight: var(--d-weight, 500);
+  color: var(--pres-color);
+  max-width: var(--pres-measure);
+}
+
+.d-slide__label {
+  font-size: 0.37em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--pres-label-tracking);
+  color: var(--pres-color-faint);
+  margin-bottom: calc(var(--pres-gap-sm) * 0.5);
+}
+
+/* Countdown: a quiet label over very large tabular figures. */
+.d-slide__timer-label {
+  font-size: 0.58em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--pres-timer-tracking);
+  color: var(--pres-color-muted);
+}
+
+.d-slide__timer {
+  font-size: 2.63em;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--pres-color-strong);
+  line-height: 1;
+}
+
+.d-slide__timer.done { color: #22C55E; }
+
+/* Placeholder shown when nothing is presented. */
+.d-slide__note {
+  font-size: 0.4em;
+  color: #34445A;
+  text-align: center;
+}
+
+/* ---- Responsive behaviour ------------------------------------------------
+   The wall is driven by vw above, which already adapts to any projector
+   aspect ratio (16:9, 16:10 and 4:3 all resolve against the viewport
+   width). These guards only cover the awkward cases the clamp cannot:
+   portrait projectors and very tall windows, where a vw-derived line
+   would overflow horizontally. */
+@media (max-aspect-ratio: 1/1) {
+  :root {
+    --pres-em: clamp(2.2vw, 5vw, 4.4vw);
+    --pres-measure: 92vw;
+  }
+}
+@media (max-height: 480px) {
+  :root {
+    --pres-em: clamp(1.6vw, 3.2vw, 3vw);
+  }
+}
+
+/* ---- Accessibility / operator overrides --------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .d-slide, .d-slide * { transition: none !important; animation: none !important; }
+}
