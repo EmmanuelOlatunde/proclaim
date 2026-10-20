@@ -18,6 +18,37 @@ from django.templatetags.static import static
 
 register = template.Library()
 
+# Runtime assets that make up the whole-app build stamp. Any edit to any of
+# them means a long-open tab is running stale code; the stamp is embedded in
+# the page (<meta name="proclaim-build">) and echoed by the WebSocket connect
+# snapshot so the client can detect staleness without polling.
+_BUILD_ASSETS = (
+    "presentation/js/control.js",
+    "presentation/js/display.js",
+    "presentation/js/scripture-picker.js",
+    "presentation/js/song-slides.js",
+    "presentation/css/app.css",
+    "presentation/css/display.css",
+    "presentation/css/presentation.css",
+)
+
+
+def build_stamp():
+    """Compact stamp of the runtime JS/CSS: the newest mtime of the set.
+
+    Any edited asset gets the current time, so the max rises exactly when
+    something changed — in dev on every save, in the portable build once per
+    rebuild (bundled mtimes are stable per build). Empty string if nothing
+    resolves (never raise: this rides the connect path).
+    """
+    stamps = [s for s in (_mtime_stamp(p) for p in _BUILD_ASSETS) if s is not None]
+    return str(max(stamps)) if stamps else ""
+
+
+@register.simple_tag
+def buildver():
+    return build_stamp()
+
 
 @register.simple_tag
 def staticver(path):

@@ -14,7 +14,12 @@ Messages sent by the server:
       presented *content itself* changes (present_song / present_scripture /
       present_image / present_announcement / present_countdown /
       goto_queue / next_item / prev_item / next_chapter / prev_chapter /
-      clear / stop_countdown).
+      clear / stop_countdown). The CONNECT snapshot additionally carries
+      "build": the server's static-asset stamp (newest mtime of the runtime
+      JS/CSS). Clients compare it with their own embedded
+      <meta name="proclaim-build"> value and, on mismatch, prompt for a
+      refresh — they never auto-reload (a reload mid-service is worse than
+      stale code). No other message carries it.
 
   {"type": "slide_change", "contentType": ..., "itemId": ..., "slideIndex": n,
    "slideCount": n}
@@ -91,6 +96,7 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from asgiref.sync import sync_to_async
 from .models import Room, QueueItem, Song, SongSection, Announcement, ImageItem
 from .scripture import DEFAULT_TRANSLATION_ID
+from .templatetags.versioned_static import build_stamp
 
 STYLE_FONTS = ("default", "serif", "sans", "noto-sans", "noto-serif", "montserrat", "merriweather")
 STYLE_SIZES = ("sm", "md", "lg")
@@ -223,9 +229,11 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
         await self.channel_layer.group_add(self.group, self.channel_name)
         await self.accept()
         _presence_add(self.room_code, self.role, self.channel_name)
-        # Send current state on connect (reconnection / late display / late operator)
+        # Send current state on connect (reconnection / late display / late operator).
+        # The snapshot carries the build stamp so a client running stale JS can
+        # prompt a refresh (see module docstring).
         state = await self.get_room_state()
-        await self.send_json({"type": "state", "state": state})
+        await self.send_json({"type": "state", "state": state, "build": build_stamp()})
 
     async def disconnect(self, close_code):
         _presence_remove(self.room_code, self.role, self.channel_name)

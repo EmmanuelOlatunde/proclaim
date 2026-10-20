@@ -704,6 +704,30 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .cc-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+/* Stale-build prompt (build-stamp mismatch, see control.js checkBuild).
+   Sits above everything; the operator refreshes at a safe moment —
+   never auto-dismisses, never auto-reloads. */
+.cc-update {
+  position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 210;
+  display: flex; align-items: center; gap: 10px;
+  background: var(--elevated); border: 1px solid var(--accent);
+  border-radius: var(--radius); padding: 10px 12px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.45);
+  font-size: 13px; color: var(--text);
+}
+.cc-update[hidden] { display: none; }
+.cc-update__text { flex: 1; line-height: 1.35; }
+.cc-update__btn {
+  flex-shrink: 0; min-height: 40px; padding: 0 16px;
+  background: var(--accent); color: #fff; border: none;
+  border-radius: 8px; font-size: 14px; font-weight: 600;
+}
+.cc-update__x {
+  flex-shrink: 0; min-width: 40px; min-height: 40px;
+  background: transparent; border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text-2); font-size: 15px;
+}
+
 /* ============================================================
    Quick Find overlay: one search across all live content
    ============================================================ */

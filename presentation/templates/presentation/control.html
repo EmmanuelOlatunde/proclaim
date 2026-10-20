@@ -5,6 +5,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#0B0F14">
+<!-- Build stamp of the runtime JS/CSS. The WebSocket connect snapshot echoes
+     the server's current stamp; on mismatch this tab prompts a refresh
+     (never a forced reload — see the update banner in control.js). -->
+<meta name="proclaim-build" content="{% buildver %}">
 <title>ChurchCast Control — {{ room_code }}</title>
 <link rel="stylesheet" href="{% staticver 'presentation/css/fonts.css' %}">
 <!-- The shared presentation design system. Loaded here too so the Style tab's
@@ -114,6 +118,16 @@
 
 <!-- Toast (scripture errors etc.) -->
 <div id="toast" class="cc-toast" role="alert"></div>
+
+<!-- Stale-build prompt: shown when the server's connect snapshot carries a
+     different build stamp than the one this page was served with. Never
+     auto-reloads — a reload mid-service is worse than stale code — the
+     operator refreshes when ready. -->
+<div class="cc-update" id="updateBanner" role="status" hidden>
+  <span class="cc-update__text">Updated version available — refresh when ready.</span>
+  <button class="cc-update__btn" id="updateReload" type="button">Refresh</button>
+  <button class="cc-update__x" id="updateDismiss" type="button" aria-label="Dismiss update notice">✕</button>
+</div>
 
 <script>
 window.ROOM_CODE = "{{ room_code }}";

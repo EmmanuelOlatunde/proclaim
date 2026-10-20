@@ -285,7 +285,12 @@ so the Connect panel can tell a phone from a projector. Existing display URLs ar
 Three small message types keep slide changes cheap over Wi-Fi:
 
 - `{"type": "state", ...}` — full snapshot. Sent once when content changes
-  (present/queue-jump/clear/stop) and on (re)connect.
+  (present/queue-jump/clear/stop) and on (re)connect. The connect snapshot
+  additionally carries `"build"` — the server's static-asset stamp. Clients
+  compare it with the `<meta name="proclaim-build">` value they were served
+  with; on mismatch the controller shows a "refresh when ready" banner and
+  the display a small corner hint. Neither ever auto-reloads: a reload
+  mid-service is worse than stale code, so the operator picks the moment.
 - `{"type": "slide_change", "contentType", "itemId", "slideIndex", "slideCount"}`
   — minimal navigation for next/prev/goto_slide. No content is retransmitted.
 - `{"type": "blank", "blank": bool}` — minimal blank toggle; position preserved.
@@ -391,10 +396,12 @@ Do NOT expose Proclaim to the public Internet — it is LAN-only by design.
 .venv/bin/python manage.py test presentation
 ```
 
-198 tests covering: scripture parsing (multi-word/numbered books, all translations),
+202 tests covering: scripture parsing (multi-word/numbered books, all translations),
 plain-text/ChordPro song import, the two-hymnal import, song search, safe image deletion,
 corrupt state/ref_data recovery (a bad cell degrades to defaults instead of bricking
-the room), and the full WebSocket protocol (present → minimal `slide_change` → `blank` →
+the room), build-stamp staleness detection (pages embed the stamp, the connect snapshot
+echoes it so a long-open tab can prompt a refresh), and the full WebSocket protocol
+(present → minimal `slide_change` → `blank` →
 reconnection snapshot) via `channels.testing.WebsocketCommunicator`.
 
 Newer coverage worth knowing about:

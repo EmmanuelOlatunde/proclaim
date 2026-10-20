@@ -60,6 +60,20 @@
     panel.scrollTop = st;
   }
 
+  // --- Stale-build detection ---
+  // The connect snapshot carries the server's build stamp (newest mtime of
+  // the runtime JS/CSS). A mismatch means this tab is running last week's
+  // code; prompt and let the operator pick the moment — never auto-reload:
+  // a reload mid-service is worse than stale code.
+  var MY_BUILD = (document.querySelector('meta[name="proclaim-build"]') || {}).content || "";
+  var updatePrompted = false;
+
+  function checkBuild(msg) {
+    if (updatePrompted || !msg.build || !MY_BUILD || msg.build === MY_BUILD) return;
+    updatePrompted = true;
+    el("updateBanner").hidden = false;
+  }
+
   // --- WebSocket ---
   // The controller uses the /ws/control/ route. It reaches the same room group
   // and speaks the identical protocol as the display; the only difference is
@@ -81,6 +95,7 @@
         var msg = JSON.parse(ev.data);
         if (msg.type === "state") {
           state = msg.state;
+          checkBuild(msg);
           renderAll();
         } else if (msg.type === "slide_change") {
           if (!state) { send({ type: "get_state" }); return; }
@@ -2552,6 +2567,9 @@
       cmd("blank", { blank: !(state && state.blank) });
     }
   });
+
+  el("updateReload").onclick = function () { location.reload(); };
+  el("updateDismiss").onclick = function () { el("updateBanner").hidden = true; };
 
   // --- Init ---
   connect();

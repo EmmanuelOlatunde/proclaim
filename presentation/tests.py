@@ -41,6 +41,7 @@ from .song_import import (
 )
 from .management.commands.import_hymnals import import_hymnal_files
 from .image_pipeline import ImageProcessError, process_image
+from .templatetags.versioned_static import build_stamp
 from .models import Song, SongSection, Room, QueueItem, Announcement, ImageItem
 
 ROOM_CODE = "WS1"
@@ -68,6 +69,28 @@ class VersionedStaticTests(django.test.SimpleTestCase):
             '{% load versioned_static %}{% staticver "' + path + '" %}'
         ).render(Context({}))
         self.assertEqual(out, "/static/" + path)
+
+
+class BuildStampTests(django.test.TestCase):
+    """Pages embed the runtime-asset stamp that the connect snapshot echoes,
+    so a long-open tab can detect it is running stale JS (never a forced
+    reload — the client only prompts)."""
+
+    def test_build_stamp_is_stable_and_asset_derived(self):
+        stamp = build_stamp()
+        self.assertTrue(stamp)
+        self.assertTrue(stamp.isdigit())
+        self.assertEqual(stamp, build_stamp())
+
+    def test_control_page_embeds_the_stamp(self):
+        r = self.client.get("/control")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('name="proclaim-build" content="%s"' % build_stamp(), r.content.decode())
+
+    def test_display_page_embeds_the_stamp(self):
+        r = self.client.get("/display/CHURCH1")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('name="proclaim-build" content="%s"' % build_stamp(), r.content.decode())
 
 
 class FontAssetTests(django.test.SimpleTestCase):
@@ -1358,6 +1381,26 @@ class WebSocketProtocolTests(django.test.TransactionTestCase):
         healed = json.loads(room.state)
         self.assertTrue(healed["blank"])
         self.assertIsNone(healed["contentType"])
+
+        await display.disconnect()
+
+    async def test_connect_snapshot_carries_build_stamp(self):
+        # The connect snapshot echoes the server's asset stamp so a client
+        # running stale JS can prompt a refresh. No other message carries it.
+        await sync_to_async(Room.objects.create)(code=ROOM_CODE)
+        display = WebsocketCommunicator(application, f"/ws/room/{ROOM_CODE}/")
+        connected, _ = await display.connect()
+        self.assertTrue(connected)
+
+        init = await display.receive_json_from()
+        self.assertEqual(init["type"], "state")
+        self.assertEqual(init["build"], build_stamp())
+
+        # A plain get_state reply is unchanged: state-only, no build key.
+        await display.send_json_to({"type": "get_state"})
+        msg = await display.receive_json_from()
+        self.assertEqual(msg["type"], "state")
+        self.assertNotIn("build", msg)
 
         await display.disconnect()
 

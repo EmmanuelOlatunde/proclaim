@@ -10,6 +10,18 @@
   var state = null;
   var countdownTimer = null;
 
+  // Stale-build detection: the connect snapshot's "build" key vs. the stamp
+  // this page was served with. On mismatch show a small corner hint ONLY —
+  // the wall is never reloaded automatically, because a reload mid-service
+  // would blank the projected image. The operator reloads at a safe moment.
+  var MY_BUILD = (document.querySelector('meta[name="proclaim-build"]') || {}).content || "";
+
+  function checkBuild(msg) {
+    if (!msg.build || !MY_BUILD || msg.build === MY_BUILD) return;
+    var hint = document.getElementById("updateHint");
+    if (hint) hint.hidden = false;
+  }
+
   var stage = document.getElementById("stage");
   var content = document.getElementById("content");
 
@@ -31,6 +43,7 @@
         var msg = JSON.parse(ev.data);
         if (msg.type === "state") {
           state = msg.state;
+          checkBuild(msg);
           render();
         } else if (msg.type === "slide_change") {
           // Minimal navigation message: no content is retransmitted.
