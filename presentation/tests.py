@@ -1198,6 +1198,38 @@ class ImageDeleteVariantTests(ImageDeleteTests):
         self.assertIn("queued", blocked.json()["error"])
 
 
+class CorruptStateRecoveryTests(django.test.TestCase):
+    """A hand-corrupted state/ref_data cell must degrade to "{}" — the
+    defaults path then serves a complete snapshot and the next command
+    heals the row. One bad cell must never brick every command on a room."""
+
+    def test_get_state_invalid_json_returns_empty(self):
+        room = Room.objects.create(code="CORRUPT1", state='{"contentType": "song"')
+        self.assertEqual(room.get_state(), {})
+
+    def test_get_state_non_object_json_returns_empty(self):
+        # Valid JSON but not an object would break get_room_state()'s st[...] writes.
+        room = Room.objects.create(code="CORRUPT2", state='["not", "a", "dict"]')
+        self.assertEqual(room.get_state(), {})
+
+    def test_get_data_invalid_json_returns_empty(self):
+        room = Room.objects.create(code="CORRUPT3")
+        qi = QueueItem.objects.create(
+            room=room, order=0, item_type="countdown", ref_data='{"seconds": 300'
+        )
+        self.assertEqual(qi.get_data(), {})
+        self.assertEqual(qi.to_dict()["data"], {})
+
+    def test_queue_endpoint_survives_corrupt_ref_data(self):
+        room = Room.objects.create(code="CORRUPT4")
+        QueueItem.objects.create(
+            room=room, order=0, item_type="countdown", ref_data="oops not json"
+        )
+        r = self.client.get("/api/rooms/CORRUPT4/queue")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["items"][0]["data"], {})
+
+
 class WebSocketProtocolTests(django.test.TransactionTestCase):
     """End-to-end: phone (control) -> server -> display over Channels."""
 
@@ -1301,6 +1333,33 @@ class WebSocketProtocolTests(django.test.TransactionTestCase):
 
         await display.disconnect()
         await control.disconnect()
+
+    async def test_corrupt_state_recovers_to_defaults(self):
+        # Connect over a corrupted state cell: the snapshot falls back to
+        # defaults instead of raising out of the handshake, and the first
+        # command persists a clean state (the row heals itself).
+        await sync_to_async(Room.objects.create)(code=ROOM_CODE, state='{"contentType": "song"')
+        display = WebsocketCommunicator(application, f"/ws/room/{ROOM_CODE}/")
+        connected, _ = await display.connect()
+        self.assertTrue(connected)
+
+        init = await display.receive_json_from()
+        self.assertEqual(init["type"], "state")
+        self.assertIsNone(init["state"]["contentType"])
+        self.assertEqual(init["state"]["slideIndex"], 0)
+        self.assertEqual(init["state"]["room"], ROOM_CODE)
+
+        await display.send_json_to({"type": "command", "command": {"action": "blank", "blank": True}})
+        msg = await display.receive_json_from()
+        self.assertEqual(msg["type"], "blank")
+        self.assertTrue(msg["blank"])
+
+        room = await sync_to_async(Room.objects.get)(code=ROOM_CODE)
+        healed = json.loads(room.state)
+        self.assertTrue(healed["blank"])
+        self.assertIsNone(healed["contentType"])
+
+        await display.disconnect()
 
     async def test_set_style(self):
         _, display, control = await self._open_rooms()

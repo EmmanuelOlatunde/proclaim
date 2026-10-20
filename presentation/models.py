@@ -20,7 +20,15 @@ class Room(models.Model):
         return self.code
 
     def get_state(self):
-        return json.loads(self.state) if self.state else {}
+        # A hand-corrupted cell (partial write, interrupted restore, manual
+        # SQLite edit) must degrade to "{}" — get_room_state() then fills the
+        # defaults and the next command heals the row on save. Raising here
+        # would brick every command on the room mid-service.
+        try:
+            st = json.loads(self.state) if self.state else {}
+        except ValueError:
+            return {}
+        return st if isinstance(st, dict) else {}
 
     def set_state(self, st):
         self.state = json.dumps(st)
@@ -199,7 +207,13 @@ class QueueItem(models.Model):
         return f"{self.room.code} #{self.order} {self.item_type}"
 
     def get_data(self):
-        return json.loads(self.ref_data) if self.ref_data else {}
+        # Same contract as Room.get_state: corrupt inline data yields "{}"
+        # (queue listing and present-time reads keep working) instead of a 500.
+        try:
+            d = json.loads(self.ref_data) if self.ref_data else {}
+        except ValueError:
+            return {}
+        return d if isinstance(d, dict) else {}
 
     def set_data(self, d):
         self.ref_data = json.dumps(d)

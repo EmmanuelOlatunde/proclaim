@@ -391,10 +391,11 @@ Do NOT expose Proclaim to the public Internet — it is LAN-only by design.
 .venv/bin/python manage.py test presentation
 ```
 
-187 tests covering: scripture parsing (multi-word/numbered books, all translations),
+198 tests covering: scripture parsing (multi-word/numbered books, all translations),
 plain-text/ChordPro song import, the two-hymnal import, song search, safe image deletion,
-and the full WebSocket protocol (present → minimal `slide_change` → `blank` → reconnection
-snapshot) via `channels.testing.WebsocketCommunicator`.
+corrupt state/ref_data recovery (a bad cell degrades to defaults instead of bricking
+the room), and the full WebSocket protocol (present → minimal `slide_change` → `blank` →
+reconnection snapshot) via `channels.testing.WebsocketCommunicator`.
 
 Newer coverage worth knowing about:
 
