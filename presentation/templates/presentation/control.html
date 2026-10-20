@@ -27,8 +27,14 @@
     <span class="cc-top__title" id="liveTitle">—</span>
   </div>
 
-  <!-- Live preview -->
-  <div class="cc-preview">
+  <!-- Live preview. Tap anywhere on this box to collapse/expand it;
+       collapsed reclaims ~230px of panel space mid-service. -->
+  <div class="cc-preview" id="previewBox">
+    <div class="cc-preview__peek" id="previewPeek">
+      <span class="cc-preview__peek-dot" id="peekDot"></span>
+      <span class="cc-preview__peek-text" id="previewPeekText">…</span>
+      <span class="cc-preview__peek-hint">tap to expand</span>
+    </div>
     <div class="cc-preview__canvas" id="previewCanvas">
       <div class="cc-preview__label" id="previewLabel">No content</div>
       <div class="cc-preview__ref" id="previewRef"></div>
@@ -58,8 +64,15 @@
   <!-- Scrollable panel -->
   <div class="cc-panel" id="panel"></div>
 
-  <!-- Fixed broadcast dock: slide strip + Prev/Blank/Next + queue nav -->
+  <!-- Fixed broadcast dock: Find + slide strip + Prev/Blank/Next + queue nav -->
   <div class="cc-dock">
+    <div class="cc-dock__find">
+      <button class="cc-findbtn" id="findBtn" type="button">
+        <span class="cc-findbtn__icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg></span>
+        <span class="cc-findbtn__text">Find song, verse, announcement…</span>
+        <kbd class="cc-findbtn__kbd">/</kbd>
+      </button>
+    </div>
     <div class="cc-slides" id="slideStrip" style="display:none"></div>
     <div class="cc-nav">
       <button class="cc-nav__prev" id="prevBtn">◀ <span>Prev</span></button>
@@ -83,6 +96,17 @@
     </div>
   </div>
 
+</div>
+
+<!-- Quick Find: one input across songs, scripture, announcements, images, queue -->
+<div class="cc-find" id="findRoot" hidden>
+  <div class="cc-find__sheet" role="dialog" aria-label="Find content">
+    <div class="cc-find__bar">
+      <input class="cc-input" id="findInput" placeholder="Find song, verse, announcement…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <button class="cc-find__close" id="findClose" aria-label="Close find"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="cc-find__results" id="findResults"></div>
+  </div>
 </div>
 
 <!-- Modal container -->

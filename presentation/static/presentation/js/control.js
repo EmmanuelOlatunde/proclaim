@@ -51,6 +51,15 @@
   var qPos = el("qPos");
   var cdBtn = el("cdBtn");
 
+  // Replace the panel's content without yanking the operator's scroll
+  // position. Live re-renders (queue edits, WS refreshes, search hits) land
+  // exactly where the thumb left off; tab switches reset explicitly instead.
+  function paintPanel(html) {
+    var st = panel.scrollTop;
+    panel.innerHTML = html;
+    panel.scrollTop = st;
+  }
+
   // --- WebSocket ---
   // The controller uses the /ws/control/ route. It reaches the same room group
   // and speaks the identical protocol as the display; the only difference is
@@ -151,6 +160,7 @@
   function renderAll() {
     syncTranslationFromState();
     renderPreview();
+    renderPeek();
     renderSlideStrip();
     renderNavState();
     syncQueueUI();
@@ -722,30 +732,34 @@
         html += '</div>';
         html += '<div style="margin-top:12px"><button class="cc-btn cc-btn--ghost" id="clearQueue">Clear Queue</button></div>';
       }
-      panel.innerHTML = html;
+      // The fetch may have landed after a tab switch; never clobber another
+      // tab's panel with queue rows.
+      if (activeTab === "queue") {
+        paintPanel(html);
 
-      el("addQueueItem").onclick = openAddQueueModal;
-      var clearQ = el("clearQueue");
-      if (clearQ) clearQ.onclick = function () {
-        api("/api/rooms/" + ROOM_CODE + "/queue", "POST", { action: "clear" }).then(renderQueue);
-      };
-      panel.querySelectorAll("[data-queue-go]").forEach(function (b) {
-        b.onclick = function () { cmd("goto_queue", { index: parseInt(b.dataset.queueGo) }); };
-      });
-      panel.querySelectorAll("[data-queue-preview]").forEach(function (b) {
-        b.onclick = function () { previewQueueItem(parseInt(b.dataset.queuePreview)); };
-      });
-      panel.querySelectorAll("[data-queue-del]").forEach(function (b) {
-        b.onclick = function () {
-          api("/api/rooms/" + ROOM_CODE + "/queue", "POST", { action: "remove", id: parseInt(b.dataset.queueDel) }).then(renderQueue);
+        el("addQueueItem").onclick = openAddQueueModal;
+        var clearQ = el("clearQueue");
+        if (clearQ) clearQ.onclick = function () {
+          api("/api/rooms/" + ROOM_CODE + "/queue", "POST", { action: "clear" }).then(renderQueue);
         };
-      });
-      panel.querySelectorAll("[data-queue-up]").forEach(function (b) {
-        b.onclick = function () { reorderQueue(parseInt(b.dataset.queueUp), -1); };
-      });
-      panel.querySelectorAll("[data-queue-down]").forEach(function (b) {
-        b.onclick = function () { reorderQueue(parseInt(b.dataset.queueDown), 1); };
-      });
+        panel.querySelectorAll("[data-queue-go]").forEach(function (b) {
+          b.onclick = function () { cmd("goto_queue", { index: parseInt(b.dataset.queueGo) }); };
+        });
+        panel.querySelectorAll("[data-queue-preview]").forEach(function (b) {
+          b.onclick = function () { previewQueueItem(parseInt(b.dataset.queuePreview)); };
+        });
+        panel.querySelectorAll("[data-queue-del]").forEach(function (b) {
+          b.onclick = function () {
+            api("/api/rooms/" + ROOM_CODE + "/queue", "POST", { action: "remove", id: parseInt(b.dataset.queueDel) }).then(renderQueue);
+          };
+        });
+        panel.querySelectorAll("[data-queue-up]").forEach(function (b) {
+          b.onclick = function () { reorderQueue(parseInt(b.dataset.queueUp), -1); };
+        });
+        panel.querySelectorAll("[data-queue-down]").forEach(function (b) {
+          b.onclick = function () { reorderQueue(parseInt(b.dataset.queueDown), 1); };
+        });
+      }
       syncQueueUI();
     });
   }
@@ -773,7 +787,7 @@
   function renderLibrary() {
     var html = '<div class="cc-panel__search"><input class="cc-input" id="libSearch" placeholder="Search all content…"></div>';
     html += '<div class="cc-panel__list" id="libList"></div>';
-    panel.innerHTML = html;
+    paintPanel(html);
     var search = el("libSearch");
     function doSearch() {
       var q = search.value;
@@ -816,7 +830,7 @@
       '<option value="English">English</option></select>';
     html += '<button class="cc-btn cc-btn--block" id="newSongBtn" style="margin-bottom:12px">+ New Song</button>';
     html += '<div class="cc-panel__list" id="songList"></div>';
-    panel.innerHTML = html;
+    paintPanel(html);
     var search = el("songSearch");
     var lang = el("songLanguage");
     function doSearch() {
@@ -884,7 +898,7 @@
           '<button class="cc-btn cc-btn--accent" id="scPresent">Present</button>' +
         '</div>' +
       '</div>';
-    panel.innerHTML = html;
+    paintPanel(html);
     paintTranslationSelector();
 
     var input = el("scInput");
@@ -1149,7 +1163,7 @@
     html += '<input type="file" id="imgFile" accept="image/*" multiple style="display:none">';
     html += '<div id="imgUploadList"></div>';
     html += '<div class="cc-panel__list" id="imgList"></div>';
-    panel.innerHTML = html;
+    paintPanel(html);
     var search = el("imgSearch");
     function doSearch() {
       // The Images tab may have been replaced (tab switch) while an upload
@@ -1313,7 +1327,7 @@
     var html = '<div class="cc-panel__search"><input class="cc-input" id="annSearch" placeholder="Search announcements…"></div>';
     html += '<button class="cc-btn cc-btn--block" id="newAnnBtn" style="margin-bottom:12px">+ New Announcement</button>';
     html += '<div class="cc-panel__list" id="annList"></div>';
-    panel.innerHTML = html;
+    paintPanel(html);
     var search = el("annSearch");
     function doSearch() {
       api("/api/announcements?q=" + encodeURIComponent(search.value)).then(function (res) {
@@ -1467,7 +1481,7 @@
       "</div></div>" +
       '<button class="cc-btn cc-btn--accent cc-btn--block" id="stSave">Save to Display</button>' +
       '<div class="cc-empty" id="stSaved" style="display:none">Saved ✓</div>';
-    panel.innerHTML = html;
+    paintPanel(html);
 
     function repaint() {
       renderPreviewInto(el("styleMiniInner"), styleSample().ct, styleSample().content, 0, st);
@@ -2220,6 +2234,8 @@
       t.classList.toggle("active", t.dataset.tab === tab);
     });
     renderTab();
+    // New tab starts at the top; re-renders within it keep their scroll.
+    panel.scrollTop = 0;
   }
 
   document.querySelectorAll(".cc-tab").forEach(function (t) {
@@ -2243,6 +2259,298 @@
   slideStrip.addEventListener("click", function (e) {
     var chip = e.target.closest("[data-slide]");
     if (chip) { cmd("goto_slide", { slideIndex: parseInt(chip.dataset.slide) }); }
+  });
+
+  // --- Collapsible live preview ---
+  // The wall is the real confidence monitor; the phone's 16:9 canvas just
+  // eats thumb-reach. Tap the preview box to collapse it to a status line.
+  var PREVIEW_KEY = "churchcast.preview.collapsed";
+
+  function setPreviewCollapsed(collapsed) {
+    el("previewBox").classList.toggle("collapsed", collapsed);
+    try { localStorage.setItem(PREVIEW_KEY, collapsed ? "1" : "0"); } catch (e) {}
+  }
+
+  function renderPeek() {
+    var box = el("previewBox");
+    if (!box || !box.classList.contains("collapsed")) return;
+    var txt;
+    if (!state) txt = "Connecting…";
+    else if (state.blank) txt = "Blanked";
+    else if (!state.contentType) txt = "No content";
+    else txt = liveTitle.textContent || "—";
+    if (state && state.slideCount > 1) {
+      txt += " · " + ((state.slideIndex || 0) + 1) + "/" + state.slideCount;
+    }
+    el("previewPeekText").textContent = txt;
+    el("peekDot").classList.toggle("live", statusDot.classList.contains("live"));
+  }
+
+  el("previewBox").addEventListener("click", function () {
+    setPreviewCollapsed(!el("previewBox").classList.contains("collapsed"));
+    renderPeek();
+  });
+  try {
+    if (localStorage.getItem(PREVIEW_KEY) === "1") setPreviewCollapsed(true);
+  } catch (e) {}
+
+  // --- Quick Find overlay ---
+  // One input across songs, scripture, announcements, images and the queue,
+  // so mid-service lookups never mean leaving the Queue tab.
+  var findOpen = false;
+  var findSel = 0;
+  var findRows = [];
+  var findTimer = null;
+  var findToken = 0;
+
+  function openFind() {
+    if (findOpen) return;
+    findOpen = true;
+    el("findRoot").hidden = false;
+    el("findInput").value = "";
+    // The queue may have changed since the last paint (other controller).
+    api("/api/rooms/" + ROOM_CODE + "/queue").then(function (res) {
+      queue = res.items || [];
+      if (findOpen && !el("findInput").value.trim()) paintFindRecents();
+    });
+    paintFindRecents();
+    el("findInput").focus();
+  }
+
+  function closeFind() {
+    if (!findOpen) return;
+    findOpen = false;
+    findToken++;
+    el("findRoot").hidden = true;
+    if (findTimer) { clearTimeout(findTimer); findTimer = null; }
+  }
+
+  function findRowHtml(r, i) {
+    var kind = { scripture: "Scripture", song: "Song", announcement: "Announcement", image: "Image", queue: "In queue" }[r.kind] || r.kind;
+    var title = r.kind === "queue" ? ("▶ " + r.title) : r.title;
+    // Queue rows are already in the queue, no +Q.
+    var add = r.kind === "queue" ? "" :
+      '<button class="cc-find__add" data-find-add="' + i + '" title="Add to queue">+Q</button>';
+    return '<div class="cc-find__row' + (i === findSel ? " sel" : "") + '" data-find-idx="' + i + '">' +
+      '<button class="cc-find__row-main" data-find-go="' + i + '">' +
+        '<span class="cc-find__row-kind">' + esc(kind) + '</span>' +
+        '<span class="cc-find__row-title">' + esc(title) + '</span>' +
+        (r.sub ? '<span class="cc-find__row-sub">' + esc(r.sub) + '</span>' : "") +
+      '</button>' + add +
+    '</div>';
+  }
+
+  function paintFindRecents() {
+    findRows = [];
+    findSel = 0;
+    var html = "";
+    var recent = BiblePicker.getRecent();
+    if (recent.length) {
+      html += '<div class="cc-find__section">Recent scripture</div>';
+      for (var i = 0; i < recent.length; i++) {
+        findRows.push({ kind: "scripture", ref: recent[i].ref, title: recent[i].ref, recent: recent[i] });
+        html += findRowHtml(findRows[i], i);
+      }
+    }
+    html += '<div class="cc-find__empty">Type to search songs, scripture, announcements, images, and this service queue.</div>';
+    html += '<div class="cc-find__hint">Enter present · ↑↓ choose · Esc close</div>';
+    el("findResults").innerHTML = html;
+    bindFindRows();
+  }
+
+  function paintFindResults(q, script, songs, anns, imgs) {
+    findRows = [];
+    findSel = 0;
+    var html = "";
+
+    if (script) {
+      findRows.push(script);
+      html += findRowHtml(script, 0);
+    }
+
+    var qMatches = [];
+    var ql = q.toLowerCase();
+    for (var i = 0; i < queue.length; i++) {
+      if (String(queueItemLabel(queue[i])).toLowerCase().indexOf(ql) !== -1) {
+        qMatches.push({ kind: "queue", index: i, title: queueItemLabel(queue[i]), sub: queue[i].item_type });
+      }
+      if (qMatches.length >= 4) break;
+    }
+    for (var qi = 0; qi < qMatches.length; qi++) {
+      html += findRowHtml(qMatches[qi], findRows.length);
+      findRows.push(qMatches[qi]);
+    }
+
+    var addRows = function (rows) {
+      for (var i = 0; i < rows.length; i++) {
+        html += findRowHtml(rows[i], findRows.length);
+        findRows.push(rows[i]);
+      }
+    };
+    addRows(((songs && songs.songs) || []).slice(0, 6).map(function (s) {
+      return { kind: "song", id: s.id, title: s.title, sub: s.author || "Song" };
+    }));
+    addRows(((anns && anns.announcements) || []).slice(0, 4).map(function (a) {
+      return { kind: "announcement", id: a.id, title: a.title, sub: (a.body || "").substring(0, 60) };
+    }));
+    addRows(((imgs && imgs.images) || []).slice(0, 4).map(function (im) {
+      return { kind: "image", id: im.id, title: im.title || "Image" };
+    }));
+
+    if (!findRows.length) {
+      html = '<div class="cc-find__empty">No matches for “' + esc(q) + '”.</div>' +
+        '<div class="cc-find__hint">Esc close</div>';
+    }
+    el("findResults").innerHTML = html;
+    bindFindRows();
+  }
+
+  function bindFindRows() {
+    el("findResults").querySelectorAll("[data-find-go]").forEach(function (b) {
+      b.onclick = function () { findActivate(parseInt(b.dataset.findGo)); };
+    });
+    el("findResults").querySelectorAll("[data-find-add]").forEach(function (b) {
+      b.onclick = function (e) {
+        e.stopPropagation();
+        findQueue(parseInt(b.dataset.findAdd));
+      };
+    });
+  }
+
+  function findActivate(i) {
+    var r = findRows[i];
+    if (!r) return;
+    closeFind();
+    if (r.kind === "scripture") {
+      if (r.recent) {
+        BiblePicker.pushRecent(r.recent);
+        cmd("present_scripture", { reference: r.recent.ref });
+      } else {
+        cmd("present_scripture", { reference: r.ref });
+        if (r.book) {
+          sc.book = r.book; sc.chapter = r.chapter; sc.verse = r.verse || null;
+          pushRecent();
+        }
+      }
+    } else if (r.kind === "song") cmd("present_song", { id: r.id });
+    else if (r.kind === "announcement") cmd("present_announcement", { id: r.id });
+    else if (r.kind === "image") cmd("present_image", { id: r.id });
+    else if (r.kind === "queue") cmd("goto_queue", { index: r.index });
+  }
+
+  function findQueue(i) {
+    var r = findRows[i];
+    if (!r) return;
+    if (r.kind === "song") {
+      api("/api/rooms/" + ROOM_CODE + "/queue", "POST", {
+        action: "add", item_type: "song", ref_id: r.id, data: { title: r.title }
+      }).then(function () { showToast("Added to queue"); });
+    } else if (r.kind === "scripture") {
+      var ref = r.ref || (r.recent && r.recent.ref);
+      if (!ref) return;
+      api("/api/rooms/" + ROOM_CODE + "/queue", "POST", {
+        action: "add", item_type: "scripture", data: { reference: ref }
+      }).then(function () { showToast("Added " + ref + " to queue"); });
+    } else if (r.kind === "announcement") {
+      api("/api/rooms/" + ROOM_CODE + "/queue", "POST", {
+        action: "add", item_type: "announcement", ref_id: r.id, data: { title: r.title }
+      }).then(function () { showToast("Added to queue"); });
+    } else if (r.kind === "image") {
+      api("/api/rooms/" + ROOM_CODE + "/queue", "POST", {
+        action: "add", item_type: "image", ref_id: r.id, data: { title: r.title }
+      }).then(function () { showToast("Added to queue"); });
+    }
+  }
+
+  function findRun() {
+    var q = el("findInput").value.trim();
+    var token = ++findToken;
+    if (!q) { paintFindRecents(); return; }
+
+    var jobs = [
+      api("/api/songs?q=" + encodeURIComponent(q)),
+      api("/api/announcements?q=" + encodeURIComponent(q)),
+      api("/api/images?q=" + encodeURIComponent(q)),
+    ];
+    // Scripture: client-side parse when the index is warm; fall back to the
+    // server parser so Find works before the picker index ever loaded.
+    var scriptJob;
+    if (scIndex) {
+      var pr = BiblePicker.parse(q, scIndex);
+      var scRef = (pr && pr.chapter)
+        ? pr.book + " " + pr.chapter + (pr.verse ? ":" + pr.verse : "") : "";
+      scriptJob = Promise.resolve(scRef ? {
+        kind: "scripture", ref: scRef, title: scRef,
+        book: pr.book, chapter: pr.chapter, verse: pr.verse || null,
+      } : null);
+    } else {
+      scriptJob = api("/api/scripture/parse?ref=" + encodeURIComponent(q)).then(
+        function (res) {
+          return (res && !res.error && res.reference)
+            ? { kind: "scripture", ref: res.reference, title: res.reference } : null;
+        },
+        function () { return null; }
+      );
+    }
+
+    Promise.all([scriptJob].concat(jobs)).then(function (res) {
+      if (token !== findToken || !findOpen) return;
+      paintFindResults(q, res[0], res[1], res[2], res[3]);
+    }).catch(function () {
+      if (token !== findToken || !findOpen) return;
+      paintFindResults(q, null, null, null, null);
+    });
+  }
+
+  function findMove(delta) {
+    if (!findRows.length) return;
+    findSel = (findSel + delta + findRows.length) % findRows.length;
+    var nodes = el("findResults").querySelectorAll(".cc-find__row");
+    for (var i = 0; i < nodes.length; i++) {
+      nodes[i].classList.toggle("sel", i === findSel);
+    }
+    var active = nodes[findSel];
+    if (active && active.scrollIntoView) active.scrollIntoView({ block: "nearest" });
+  }
+
+  el("findBtn").onclick = openFind;
+  el("findClose").onclick = closeFind;
+  el("findRoot").addEventListener("click", function (e) {
+    if (e.target === this) closeFind();
+  });
+  el("findInput").addEventListener("input", function () {
+    if (findTimer) clearTimeout(findTimer);
+    findTimer = setTimeout(findRun, 160);
+  });
+  el("findInput").addEventListener("keydown", function (e) {
+    if (e.key === "ArrowDown") { e.preventDefault(); findMove(1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); findMove(-1); }
+    else if (e.key === "Enter") { e.preventDefault(); findActivate(findSel); }
+    else if (e.key === "Escape") { e.preventDefault(); closeFind(); }
+  });
+
+  // --- Hardware keyboard transport ---
+  // ←/→ slides, B blank, / find, for laptop + BT-keyboard operators.
+  // Never steals keys from a text field the operator is typing in.
+  document.addEventListener("keydown", function (e) {
+    var t = e.target;
+    var typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" ||
+      t.tagName === "SELECT" || t.isContentEditable);
+    if (typing) return;
+    if (e.key === "/") { e.preventDefault(); openFind(); return; }
+    if (findOpen) {
+      // Focus can land on the body while the overlay is up.
+      if (e.key === "Escape") closeFind();
+      else if (e.key === "ArrowDown") { e.preventDefault(); findMove(1); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); findMove(-1); }
+      else if (e.key === "Enter") { e.preventDefault(); findActivate(findSel); }
+      return;
+    }
+    if (e.key === "ArrowRight") { e.preventDefault(); cmd("next"); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); cmd("prev"); }
+    else if (e.key === "b" || e.key === "B") {
+      cmd("blank", { blank: !(state && state.blank) });
+    }
   });
 
   // --- Init ---
